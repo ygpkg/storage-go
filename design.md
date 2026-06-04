@@ -1,18 +1,18 @@
 # storage-go 技术设计文档
 
-> v2.0
-
 ---
 
 ## 1. 背景与目标
 
-业务中存在多种对象存储系统（MinIO、COS、OSS、TOS、WeedFS、本地磁盘），各自 SDK 接口差异大、调用方代码重复且难以迁移。storage-go 旨在提供统一的抽象层，屏蔽底层差异。
+业务中存在多种对象存储系统（MinIO、COS、seaweedfs、本地磁盘），各自 SDK 接口差异大、调用方代码重复且难以迁移。storage-go 旨在提供统一的符合 S3 标准协议的抽象层，屏蔽底层差异。
+
+**当前实现范围：** MinIO、COS、SeaweedFS、本地磁盘四种存储驱动。
 
 **核心设计原则：**
 
 - **面向接口编程**：核心抽象层与具体 driver 完全解耦
 - **S3 语义优先**：接口设计对齐 S3，内部适配各存储差异
-- **统一入口**：通过 `New` 函数 + `Config` 构建 Client，调用方只依赖主包，无需 blank import
+- **统一入口**：通过 `New` 函数 + `Config` 构建 Client，调用方只依赖主包
 - **路径规范化**：StoragePath 携带访问协议语义，调用方可感知网络 vs. 磁盘
 - **错误统一**：sentinel error + `errors.Is` 屏蔽底层错误码差异
 
@@ -24,26 +24,28 @@
 
 ```
 storage-go/
-├── storage.go          # 核心接口（Storage、Options 等）
-├── client.go           # New 函数与 Config 定义
-├── path.go             # StoragePath 定义与路径规范
-├── errors.go           # 统一错误类型
+├── types/               # 核心类型与接口定义（Storage、StoragePath、错误、选项等）
+├── storage.go           # 类型别名重导出 + New 函数 + Config
+├── client.go
+├── path.go
+├── errors.go
 │
-└── internal/
-    ├── s3/             # AWS S3 标准实现（其他网络驱动的复用基础）
-    ├── minio/          # MinIO（基于 s3 内部实现薄封装）
-    ├── cos/            # 腾讯云 COS
-    ├── oss/            # 阿里云 OSS
-    ├── tos/            # 字节跳动 TOS
+└── driver/
+    ├── minio/          # MinIO（基于 minio-go SDK，独立实现）
+    ├── cos/            # 腾讯云 COS（基于 cos-go-sdk-v5）
     ├── weedfs/         # SeaweedFS HTTP API
     ├── local/          # 本地文件系统
-    └── storagetest/    # 通用驱动一致性测试套件（内部使用）
+    ├── internal/       # 轻量 S3 协议适配层（错误码映射、公共类型/工具）
+    └── storagetest/    # 通用驱动一致性测试套件
 ```
 
-> **与 v1 的关键差异：**
-> - 不再有对外暴露的 `driver/` 子包，所有 driver 实现移入 `internal/`，调用方无法直接 import
-> - 不再需要注册中心（registry），`New` 函数内部根据 `Config.Driver` 字段做 switch 分发
-> - `storagetest` 移入 `internal/`，仅供内部集成测试使用
+> **解耦设计：**
+> - `types/` 子包包含所有接口、类型、错误定义，无外部依赖
+> - root `storage` 包重导出 `types/` 中的类型别名，调用方只需 import 主包
+> - 各 driver 包只 import `types/`，与 root 包无循环依赖
+> - `New` 函数在 root 包中 switch 直接调用各 driver 包的构造函数
+
+> **实现范围：** 首期实现 minio、cos、weedfs、local 四种驱动。
 
 ### 分层关系
 
@@ -56,11 +58,29 @@ storage-go/
                       │
 ┌─────────────────────▼──────────────────────────────┐
 │               storage-go 核心层                     │
-│       New / Config / Storage接口 / StoragePath      │
-└──┬──────┬──────┬──────┬──────┬──────┬─────────────┘
-   │      │      │      │      │      │   (internal)
-  s3   minio   cos    oss    tos  weedfs   local
+│   Config / New / 类型别名重导出                      │
+│   实际定义来自 types/{storage,path,errors,options}   │
+└─────────────────────┬──────────────────────────────┘
+                      │
+┌─────────────────────▼──────────────────────────────┐
+│               storage-go/types/ 子包                │
+│   Storage接口 / StoragePath / 错误 / 选项 / 数据结构  │
+└──┬──────────┬──────────┬──────────┬───────────────┘
+   │          │          │          │    import types
+   │   ┌──────▼──┐  ┌────▼───┐  ┌──▼──────────┐
+   │   │ driver/ │  │ driver/│  │driver/       │
+   │   │  minio  │  │  cos   │  │internal      │
+   │   └─────────┘  └────────┘  └──────────────┘
+   │   ┌──────▼──┐  ┌────▼───┐
+   │   │ driver/ │  │ driver/│
+   │   │  weedfs  │  │  local  │
+   │   └─────────┘  └────────┘
 ```
+
+**依赖关系：**
+- `types/` 无外部依赖，定义全部接口和类型
+- root `storage` 包 import `types/` 并重导出，同时 import 各 `driver/xxx` 实现 switch
+- 各 `driver/xxx` 只 import `types/`，不 import root `storage` 包，避免 import cycle
 
 ---
 
@@ -72,11 +92,8 @@ storage-go/
 type DriverType string
 
 const (
-    DriverS3     DriverType = "s3"
     DriverMinio  DriverType = "minio"
     DriverCOS    DriverType = "cos"
-    DriverOSS    DriverType = "oss"
-    DriverTOS    DriverType = "tos"
     DriverWeedFS DriverType = "weedfs"
     DriverLocal  DriverType = "local"
 )
@@ -110,20 +127,14 @@ func New(cfg Config) (Storage, error) {
         return nil, err
     }
     switch cfg.Driver {
-    case DriverS3:
-        return internal_s3.New(cfg)
     case DriverMinio:
-        return internal_minio.New(cfg)
+        return driver_minio.New(cfg)
     case DriverCOS:
-        return internal_cos.New(cfg)
-    case DriverOSS:
-        return internal_oss.New(cfg)
-    case DriverTOS:
-        return internal_tos.New(cfg)
+        return driver_cos.New(cfg)
     case DriverWeedFS:
-        return internal_weedfs.New(cfg)
+        return driver_weedfs.New(cfg)
     case DriverLocal:
-        return internal_local.New(cfg)
+        return driver_local.New(cfg)
     default:
         return nil, fmt.Errorf("%w: unknown driver %q", ErrInvalidConfig, cfg.Driver)
     }
@@ -168,8 +179,8 @@ StoragePath 是整个系统的核心语义单元，路径中携带访问协议�
 
 | AccessScheme | 说明 | 适用 Driver |
 |---|---|---|
-| `SchemeHTTP` | 走 HTTP/HTTPS 网络访问 | s3、minio、cos、oss、tos、weedfs |
-| `SchemeLocal` | 走本地磁盘访问 | local |
+| `SchemeS3` | S3 语义网络存储 | minio、cos、weedfs |
+| `SchemeFile` | 本地文件系统存储 | local |
 
 ### 结构定义
 
@@ -177,8 +188,8 @@ StoragePath 是整个系统的核心语义单元，路径中携带访问协议�
 type AccessScheme string
 
 const (
-    SchemeHTTP  AccessScheme = "http"   // 网络访问（含 https）
-    SchemeLocal AccessScheme = "local"  // 本地磁盘访问
+    SchemeS3   AccessScheme = "s3"    // S3 语义网络存储（minio、cos、weedfs）
+    SchemeFile AccessScheme = "file"  // 本地文件系统存储
 )
 
 type StoragePath struct {
@@ -190,8 +201,12 @@ type StoragePath struct {
 // local driver 专属，返回操作系统可用的文件路径
 func (p StoragePath) LocalPath() string
 
-// 序列化为 bucket/key
+// 序列化为 scheme://bucket/key
 func (p StoragePath) String() string
+
+// 解析路径字符串：
+//   - 带前缀 "s3://" 或 "file://" 时自动识别 Scheme，忽略 scheme 参数
+//   - 不带前缀时使用传入的 scheme 参数
 func ParsePath(scheme AccessScheme, raw string) (StoragePath, error)
 ```
 
@@ -202,19 +217,68 @@ func ParsePath(scheme AccessScheme, raw string) (StoragePath, error)
 - `Key` 推荐结构：`{业务域}/{日期}/{hash或ID}.{ext}`，例如 `user-avatar/20240601/a3f9c2.webp`
 - `Scheme` 由 driver 写入，调用方不需要手动设置
 
+### 路径示例
+
+**SchemeS3（网络存储）：**
+
+```go
+// MinIO 上传后的返回路径
+path := StoragePath{Scheme: SchemeS3, Bucket: "media-prod", Key: "user-avatar/20240601/a3f9c2.webp"}
+path.String()  → "s3://media-prod/user-avatar/20240601/a3f9c2.webp"
+path.LocalPath() → panic（SchemeS3 不支持 LocalPath）
+```
+
+```go
+// COS
+path := StoragePath{Scheme: SchemeS3, Bucket: "my-bucket-1250000000", Key: "docs/report/2024/q2.pdf"}
+path.String()  → "s3://my-bucket-1250000000/docs/report/2024/q2.pdf"
+```
+
+**SchemeFile（本地存储，BaseDir="/tmp/storage"）：**
+
+```go
+// Local 上传后的返回路径
+path := StoragePath{Scheme: SchemeFile, Bucket: "uploads", Key: "user-avatar/20240601/a3f9c2.webp"}
+path.String()     → "file://uploads/user-avatar/20240601/a3f9c2.webp"
+path.LocalPath()  → "/tmp/storage/uploads/user-avatar/20240601/a3f9c2.webp"
+```
+
+**ParsePath 解析：**
+
+```go
+// 带前缀解析（自动识别 Scheme，忽略 scheme 参数）
+ParsePath(SchemeS3, "s3://media-prod/user-avatar/20240601/a3f9c2.webp")
+→ StoragePath{Scheme: "s3", Bucket: "media-prod", Key: "user-avatar/20240601/a3f9c2.webp"}
+
+ParsePath(SchemeS3, "file://uploads/user-avatar/20240601/a3f9c2.webp")
+→ StoragePath{Scheme: "file", Bucket: "uploads", Key: "user-avatar/20240601/a3f9c2.webp"}
+
+// 不带前缀解析（使用传入的 scheme）
+ParsePath(SchemeS3, "media-prod/user-avatar/20240601/a3f9c2.webp")
+→ StoragePath{Scheme: "s3", Bucket: "media-prod", Key: "user-avatar/20240601/a3f9c2.webp"}
+
+ParsePath(SchemeFile, "uploads/user-avatar/20240601/a3f9c2.webp")
+→ StoragePath{Scheme: "file", Bucket: "uploads", Key: "user-avatar/20240601/a3f9c2.webp"}
+
+// 非法路径（校验失败）
+ParsePath(SchemeS3, "/leading-slash/path")  → ErrInvalidPath（Key 不能以 / 开头）
+ParsePath(SchemeS3, "bucket/../traversal")  → ErrInvalidPath（Key 不能含 ..）
+ParsePath(SchemeS3, "bucket/a//b")          → ErrInvalidPath（Key 不能含连续 //）
+```
+
 ### 典型用法
 
 ```go
-meta, err := s.PutObject(ctx, "media-prod", "avatar/user123.webp", r,
+meta, err := s.PutObject(ctx, "media-prod", "avatar/user123.webp", r, size,
     storage.WithContentType("image/webp"),
 )
 
 switch meta.Path.Scheme {
-case storage.SchemeHTTP:
+case storage.SchemeS3:
     // 走网络，拼接 CDN 域名或使用 presign
     url := "https://cdn.example.com/" + meta.Path.Bucket + "/" + meta.Path.Key
     saveURLToDB(url)
-case storage.SchemeLocal:
+case storage.SchemeFile:
     // 直接使用本地文件路径
     serveFileDirectly(meta.Path.LocalPath())
 }
@@ -227,7 +291,7 @@ case storage.SchemeLocal:
 ```go
 type Storage interface {
     // Object 操作
-    PutObject(ctx context.Context, bucket, key string, r io.Reader, opts ...PutOption) (*ObjectMeta, error)
+    PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...PutOption) (*ObjectMeta, error)
     GetObject(ctx context.Context, bucket, key string, opts ...GetOption) (*Object, error)
     HeadObject(ctx context.Context, bucket, key string) (*ObjectMeta, error)
     DeleteObject(ctx context.Context, bucket, key string) error
@@ -253,7 +317,7 @@ type Storage interface {
 
 type MultipartUploader interface {
     CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...PutOption) (UploadID, error)
-    UploadPart(ctx context.Context, bucket, key string, id UploadID, partNum int, r io.Reader) (*PartInfo, error)
+    UploadPart(ctx context.Context, bucket, key string, id UploadID, partNum int, r io.Reader, size int64) (*PartInfo, error)
     CompleteMultipartUpload(ctx context.Context, bucket, key string, id UploadID, parts []PartInfo) (*ObjectMeta, error)
     AbortMultipartUpload(ctx context.Context, bucket, key string, id UploadID) error
 }
@@ -339,22 +403,21 @@ if errors.Is(err, storage.ErrNotFound) {
 
 ## 9. 各 Driver 实现策略
 
-| Driver | 实现策略 | Scheme | Presign | LocalPath() |
+| Driver | 实现策略 | SDK/依赖 | Scheme | Presign |
 |---|---|---|---|---|
-| `s3` | 基于 aws-sdk-go-v2，标准参考实现 | SchemeHTTP | 支持 | — |
-| `minio` | 复用 internal/s3，覆盖 endpoint + path-style | SchemeHTTP | 支持 | — |
-| `cos` | 腾讯云 SDK，差异部分重写 | SchemeHTTP | 支持 | — |
-| `oss` | 阿里云 SDK，差异部分重写 | SchemeHTTP | 支持 | — |
-| `tos` | 字节跳动 SDK，差异部分重写 | SchemeHTTP | 支持 | — |
-| `weedfs` | WeedFS HTTP API 直接调用 | SchemeHTTP | ErrNotSupported | — |
-| `local` | os 标准库，适合开发/测试 | SchemeLocal | ErrNotSupported | 支持 |
+| `minio` | minio-go SDK，独立实现 | `github.com/minio/minio-go/v7` | SchemeS3 | 支持 |
+| `cos` | cos-go-sdk-v5，复用 driver/internal 错误码映射 | `github.com/tencentyun/cos-go-sdk-v5` | SchemeS3 | 支持 |
+| `weedfs` | SeaweedFS HTTP API 直接调用 | 仅 `net/http` | SchemeS3 | ErrNotSupported |
+| `local` | os 标准库 | 无外部依赖 | SchemeFile | ErrNotSupported |
+
+> **driver/internal 说明：** 轻量化，仅包含错误码映射（将各 SDK 错误码统一映射到 sentinel error）和公共类型/工具（如路径校验辅助函数）。签名计算、XML 解析等由各 SDK 自行封装。
 
 ---
 
-## 10. 一致性测试套件（internal/storagetest）
+## 10. 一致性测试套件（driver/storagetest）
 
 ```go
-// internal/storagetest/suite.go
+// driver/storagetest/suite.go
 func RunSuite(t *testing.T, s storage.Storage, bucket string) {
     t.Run("PutGet",     func(t *testing.T) { testPutGet(t, s, bucket) })
     t.Run("HeadDelete", func(t *testing.T) { testHeadDelete(t, s, bucket) })
@@ -370,6 +433,21 @@ func TestDriverMinio(t *testing.T) {
     s, _ := storage.New(storage.Config{Driver: storage.DriverMinio, ...})
     storagetest.RunSuite(t, s, "test-bucket")
 }
+
+func TestDriverCOS(t *testing.T) {
+    s, _ := storage.New(storage.Config{Driver: storage.DriverCOS, ...})
+    storagetest.RunSuite(t, s, "test-bucket")
+}
+
+func TestDriverWeedFS(t *testing.T) {
+    s, _ := storage.New(storage.Config{Driver: storage.DriverWeedFS, ...})
+    storagetest.RunSuite(t, s, "test-bucket")
+}
+
+func TestDriverLocal(t *testing.T) {
+    s, _ := storage.New(storage.Config{Driver: storage.DriverLocal, BaseDir: "/tmp/storage-test"})
+    storagetest.RunSuite(t, s, "test-bucket")
+}
 ```
 
 ---
@@ -379,10 +457,18 @@ func TestDriverMinio(t *testing.T) {
 | 决策点 | 选择 | 理由 |
 |---|---|---|
 | driver 引入方式 | `New` 函数 + `Config.Driver` switch | 调用方只依赖主包，切换存储只改配置，零代码修改 |
-| driver 实现位置 | `internal/` 子包 | 对外隐藏实现细节，防止调用方绕过 `New` 直接构造 |
-| 路径模型 | `StoragePath{Scheme, Bucket, Key}` | 携带协议语义，调用方感知网络 vs. 磁盘，无需感知 driver |
-| Scheme 设置方 | driver 写入，调用方只读 | 与 driver 配置强绑定，避免调用方误设 |
-| URL 构建 | 调用方根据 Scheme 自行处理 | 存储层不感知 CDN/域名，职责清晰 |
+| driver 实现位置 | `driver/` 子包 | 高级调用方可直接 import 特定 driver；通过 `types/` 子包解耦，避免 root 包与 driver 间的 import cycle |
+| 解耦方式 | `types/` 子包 + root 包重导出 | driver 只 import `types/`，root `storage` 包别名重导出，调用方感知为一个包 |
+| 路径模型 | `StoragePath{Scheme, Bucket, Key}`，Scheme 为 `s3` 或 `file` | 携带协议语义，调用方感知网络 vs. 磁盘，`String()` 输出 `s3://`/`file://` URI 格式 |
+| Scheme 设置方 | driver 写入，调用方只读 | Scheme 为 `s3` 或 `file`，与 driver 配置强绑定，避免调用方误设 |
+| URL 构建 | 调用方根据 Scheme 自行处理 | `SchemeS3` 走网络拼接 CDN/域名，`SchemeFile` 走本地路径，职责清晰 |
 | Config 扩展 | `ExtraOptions map[string]string` | 承接 driver 特有参数，不污染通用 Config 字段 |
 | 错误处理 | sentinel error + `errors.Is` | 屏蔽底层差异，符合 Go 惯例 |
 | 分页 | `Pager[T]` 泛型流式接口 | 避免一次性加载大量对象，适合大桶生产场景 |
+
+## 参考项目
+- /Users/morehao/Documents/study/go/pkgs/aws-sdk-go-v2/service/s3
+- /Users/morehao/Documents/study/go/pkgs/go-storage
+- /Users/morehao/Documents/study/go/pkgs/gofakes3
+- /Users/morehao/Documents/practice/go/golib/storage
+- /Users/morehao/Documents/study/go/pkgs/beyond-go-storage
