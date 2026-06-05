@@ -6,7 +6,7 @@ import (
 
 	miniogo "github.com/minio/minio-go/v7"
 
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/types"
 )
 
 // WrapMinioErr 将 minio SDK 错误映射到 types 的 sentinel error。

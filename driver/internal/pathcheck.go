@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/types"
 )
 
 // S3 bucket 命名规则：小写字母、数字、连字符；3-63 字符；首尾必须字母数字

@@ -9,7 +9,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/types"
 )
 
 // RunSuite 对一个 storage 实例跑通用一致性测试。

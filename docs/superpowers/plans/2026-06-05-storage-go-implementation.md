@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.21+，minio-go/v7，cos-go-sdk-v5，golang.org/x/sync，标准库。
 
-**Module:** `github.com/yangguang/storage-go`
+**Module:** `github.com/insmtx/storage-go`
 
 ---
 
@@ -45,10 +45,10 @@
 
 ```bash
 cd /Users/morehao/Documents/works/yangu/ygpkg/storage-go
-go mod init github.com/yangguang/storage-go
+go mod init github.com/insmtx/storage-go
 ```
 
-Expected: `go.mod` 文件已生成，包含 `module github.com/yangguang/storage-go`。
+Expected: `go.mod` 文件已生成，包含 `module github.com/insmtx/storage-go`。
 
 - [ ] **Step 2: 添加运行时依赖**
 
@@ -970,8 +970,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yangguang/storage-go/driver/registry"
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/driver/registry"
+	"github.com/insmtx/storage-go/types"
 )
 
 type stubStorage struct{}
@@ -1047,7 +1047,7 @@ Expected: FAIL（undefined: New, Config 等）。
 ```go
 package storage
 
-import "github.com/yangguang/storage-go/types"
+import "github.com/insmtx/storage-go/types"
 
 type (
 	ErrNotFound         = types.ErrNotFound
@@ -1069,7 +1069,7 @@ type (
 ```go
 package storage
 
-import "github.com/yangguang/storage-go/types"
+import "github.com/insmtx/storage-go/types"
 
 type (
 	AccessScheme = types.AccessScheme
@@ -1116,8 +1116,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yangguang/storage-go/driver/registry"
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/driver/registry"
+	"github.com/insmtx/storage-go/types"
 )
 
 type DriverType string
@@ -1216,8 +1216,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yangguang/storage-go/driver/registry"
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/driver/registry"
+	"github.com/insmtx/storage-go/types"
 )
 
 // stubStorage 记录调用，验证 Client 转发正确性
@@ -1413,7 +1413,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/types"
 )
 
 // Client 是调用方主入口，bucket 由 Config 注入。
@@ -1537,7 +1537,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/types"
 )
 
 func TestValidateBucket(t *testing.T) {
@@ -1614,7 +1614,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/types"
 )
 
 // S3 bucket 命名规则：小写字母、数字、连字符；3-63 字符；首尾必须字母数字
@@ -1686,7 +1686,7 @@ import (
 
 	miniogo "github.com/minio/minio-go/v7"
 
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/types"
 )
 
 // WrapMinioErr 将 minio SDK 错误映射到 types 的 sentinel error。
@@ -2203,9 +2203,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yangguang/storage-go/driver/registry"
-	"github.com/yangguang/storage-go/driver/storagetest"
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/driver/registry"
+	"github.com/insmtx/storage-go/driver/storagetest"
+	"github.com/insmtx/storage-go/types"
 )
 
 func newTestDriver(t *testing.T) *Driver {
@@ -2415,9 +2415,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yangguang/storage-go/driver/internal"
-	"github.com/yangguang/storage-go/driver/registry"
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/driver/internal"
+	"github.com/insmtx/storage-go/driver/registry"
+	"github.com/insmtx/storage-go/types"
 )
 
 func init() {
@@ -2963,7 +2963,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/types"
 )
 
 // RunSuite 对一个 storage 实例跑通用一致性测试。
@@ -3122,7 +3122,7 @@ func TestDriverStoragetestSuite(t *testing.T) {
 ```go
 import (
 	// ... 现有 import
-	"github.com/yangguang/storage-go/driver/storagetest"
+	"github.com/insmtx/storage-go/driver/storagetest"
 )
 ```
 
@@ -3188,9 +3188,9 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
-	"github.com/yangguang/storage-go/driver/internal"
-	"github.com/yangguang/storage-go/driver/registry"
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/driver/internal"
+	"github.com/insmtx/storage-go/driver/registry"
+	"github.com/insmtx/storage-go/types"
 )
 
 func init() {
@@ -3491,7 +3491,7 @@ func TestMinioIntegration(t *testing.T) {
 }
 ```
 
-并在 import 中加 `"os"` 和 `"github.com/yangguang/storage-go/driver/storagetest"`。
+并在 import 中加 `"os"` 和 `"github.com/insmtx/storage-go/driver/storagetest"`。
 
 - [ ] **Step 4: 编译验证**
 
@@ -3555,9 +3555,9 @@ import (
 
 	"github.com/tencentyun/cos-go-sdk-v5"
 
-	"github.com/yangguang/storage-go/driver/internal"
-	"github.com/yangguang/storage-go/driver/registry"
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/driver/internal"
+	"github.com/insmtx/storage-go/driver/registry"
+	"github.com/insmtx/storage-go/types"
 )
 
 func init() {
@@ -3675,7 +3675,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yangguang/storage-go/driver/storagetest"
+	"github.com/insmtx/storage-go/driver/storagetest"
 )
 
 func TestCosIntegration(t *testing.T) {
@@ -3729,8 +3729,8 @@ git commit -m "feat(driver/cos): add COS driver"
 package weedfs
 
 import (
-	"github.com/yangguang/storage-go/driver/minio"
-	"github.com/yangguang/storage-go/driver/registry"
+	"github.com/insmtx/storage-go/driver/minio"
+	"github.com/insmtx/storage-go/driver/registry"
 )
 
 // S3Path 复用 minio driver 的 s3Path
@@ -3788,7 +3788,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yangguang/storage-go/driver/storagetest"
+	"github.com/insmtx/storage-go/driver/storagetest"
 )
 
 func TestWeedfsIntegration(t *testing.T) {

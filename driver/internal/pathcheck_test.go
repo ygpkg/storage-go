@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/types"
 )
 
 func TestValidateBucket(t *testing.T) {

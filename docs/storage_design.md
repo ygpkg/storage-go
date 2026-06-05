@@ -108,7 +108,7 @@ storage-go/
 // path.go
 package storage
 
-import "github.com/yangguang/storage-go/types"
+import "github.com/insmtx/storage-go/types"
 
 type (
     StoragePath  = types.StoragePath
@@ -205,7 +205,7 @@ import (
 
     "golang.org/x/sync/errgroup"
 
-    "github.com/yangguang/storage-go/types"
+    "github.com/insmtx/storage-go/types"
 )
 
 // Client 是调用方主入口，bucket 由 Config 注入
@@ -272,7 +272,7 @@ package registry
 import (
     "sync"
 
-    "github.com/yangguang/storage-go/types"
+    "github.com/insmtx/storage-go/types"
 )
 
 // Factory 是 driver 工厂函数，接收 driver 自己的 Config，返回 types.Storage
@@ -305,7 +305,7 @@ func Get(name string) (Factory, bool) {
 // driver/minio/driver.go
 package minio
 
-import "github.com/yangguang/storage-go/driver/registry"
+import "github.com/insmtx/storage-go/driver/registry"
 
 func init() {
     registry.Register("minio", New)
@@ -809,9 +809,9 @@ import (
     miniogo "github.com/minio/minio-go/v7"
     "github.com/minio/minio-go/v7/pkg/credentials"
 
-    "github.com/yangguang/storage-go/driver/internal"
-    "github.com/yangguang/storage-go/driver/registry"
-    "github.com/yangguang/storage-go/types"
+    "github.com/insmtx/storage-go/driver/internal"
+    "github.com/insmtx/storage-go/driver/registry"
+    "github.com/insmtx/storage-go/types"
 )
 
 // Driver 实现 types.Storage；具体类型导出，NewPath 等扩展方法挂在上面
@@ -881,7 +881,7 @@ import (
 
     miniogo "github.com/minio/minio-go/v7"
 
-    "github.com/yangguang/storage-go/types"
+    "github.com/insmtx/storage-go/types"
 )
 
 func WrapMinioErr(err error) error {
@@ -985,7 +985,7 @@ import (
     "io"
     "testing"
 
-    "github.com/yangguang/storage-go/types"
+    "github.com/insmtx/storage-go/types"
 )
 
 func RunSuite(t *testing.T, s types.Storage, bucket string) {
@@ -1009,9 +1009,9 @@ package minio_test
 import (
     "testing"
 
-    "github.com/yangguang/storage-go"
-    "github.com/yangguang/storage-go/driver/minio"      // 显式 import 触发 init
-    "github.com/yangguang/storage-go/driver/storagetest"
+    "github.com/insmtx/storage-go"
+    "github.com/insmtx/storage-go/driver/minio"      // 显式 import 触发 init
+    "github.com/insmtx/storage-go/driver/storagetest"
 )
 
 func TestDriverMinio(t *testing.T) {
@@ -1027,9 +1027,9 @@ package local_test
 import (
     "testing"
 
-    "github.com/yangguang/storage-go"
-    "github.com/yangguang/storage-go/driver/local"       // 显式 import 触发 init
-    "github.com/yangguang/storage-go/driver/storagetest"
+    "github.com/insmtx/storage-go"
+    "github.com/insmtx/storage-go/driver/local"       // 显式 import 触发 init
+    "github.com/insmtx/storage-go/driver/storagetest"
 )
 
 func TestDriverLocal(t *testing.T) {

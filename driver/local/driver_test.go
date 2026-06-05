@@ -9,9 +9,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yangguang/storage-go/driver/registry"
-	"github.com/yangguang/storage-go/driver/storagetest"
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/driver/registry"
+	"github.com/insmtx/storage-go/driver/storagetest"
+	"github.com/insmtx/storage-go/types"
 )
 
 func newTestDriver(t *testing.T) *Driver {

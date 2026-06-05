@@ -10,9 +10,9 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
-	"github.com/yangguang/storage-go/driver/internal"
-	"github.com/yangguang/storage-go/driver/registry"
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/driver/internal"
+	"github.com/insmtx/storage-go/driver/registry"
+	"github.com/insmtx/storage-go/types"
 )
 
 func init() {

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yangguang/storage-go/driver/registry"
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/driver/registry"
+	"github.com/insmtx/storage-go/types"
 )
 
 type stubStorage struct {

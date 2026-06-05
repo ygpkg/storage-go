@@ -3,9 +3,9 @@ package weedfs
 import (
 	"fmt"
 
-	"github.com/yangguang/storage-go/driver/minio"
-	"github.com/yangguang/storage-go/driver/registry"
-	"github.com/yangguang/storage-go/types"
+	"github.com/insmtx/storage-go/driver/minio"
+	"github.com/insmtx/storage-go/driver/registry"
+	"github.com/insmtx/storage-go/types"
 )
 
 func init() {

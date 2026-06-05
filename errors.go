@@ -1,6 +1,6 @@
 package storage
 
-import "github.com/yangguang/storage-go/types"
+import "github.com/insmtx/storage-go/types"
 
 var (
 	ErrNotFound         = types.ErrNotFound

@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yangguang/storage-go/driver/storagetest"
+	"github.com/insmtx/storage-go/driver/storagetest"
 )
 
 func TestCosIntegration(t *testing.T) {
