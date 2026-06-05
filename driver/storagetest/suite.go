@@ -53,6 +53,7 @@ func RunSuite(t *testing.T, s types.Storage, bucket string) {
 	})
 
 	t.Run("List", func(t *testing.T) {
+		_, _ = s.PutObject(ctx, bucket, "root.txt", bytes.NewReader([]byte("0")), 1)
 		_, _ = s.PutObject(ctx, bucket, "a/1.txt", bytes.NewReader([]byte("1")), 1)
 		_, _ = s.PutObject(ctx, bucket, "a/2.txt", bytes.NewReader([]byte("2")), 1)
 		_, _ = s.PutObject(ctx, bucket, "b/1.txt", bytes.NewReader([]byte("3")), 1)

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/yangguang/storage-go/driver/registry"
+	"github.com/yangguang/storage-go/driver/storagetest"
 	"github.com/yangguang/storage-go/types"
 )
 
@@ -181,4 +182,13 @@ func TestDriverInvalidKey(t *testing.T) {
 	if !errors.Is(err, types.ErrInvalidPath) {
 		t.Errorf("err = %v, want ErrInvalidPath", err)
 	}
+}
+
+func TestDriverStoragetestSuite(t *testing.T) {
+	d, err := New(Config{BaseDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	storagetest.RunSuite(t, d, "test-bucket")
 }
