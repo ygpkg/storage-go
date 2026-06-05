@@ -17,11 +17,12 @@
 | 面向接口编程 | 核心抽象层与具体 driver 完全解耦，driver 独立可测 |
 | S3 语义优先 | 接口命名、参数顺序、返回结构对齐 S3 API（参考 aws-sdk-go-v2/service/s3） |
 | 入参符合 S3 规范 | 方法入参以 `bucket`、`key` 分开传递，与 AWS SDK 习惯一致 |
-| 返回值携带路径语义 | `StoragePath` 提供带协议路径与本地路径两种视图 |
-| 统一入口 | `storage.New(Config)` 构建 Client，调用方只依赖主包 |
+| 返回值携带路径语义 | `StoragePath` 是 interface，提供 `Path()`（协议路径）与 `URL()`（可访问 URL）两种视图 |
+| 统一入口 | `storage.New(Config)` 构建 Client，调用方 `import "storage-go"` + `import _ "storage-go/driver/<name>"` |
 | 无循环依赖 | 公共类型抽取到零依赖的 `types` 子包，依赖图为单向 DAG |
 | 路径规范化 | `StoragePath` 携带协议语义，调用方可感知网络 vs. 磁盘 |
 | 错误统一 | sentinel error + `errors.Is` 屏蔽底层错误码差异 |
+| 接口隔离 | 顶层 `Storage` 由 `ObjectReader / ObjectWriter / ObjectLister / URLBuilder / MultipartUploader` 组合而成 |
 
 ---
 
@@ -32,21 +33,22 @@
 ```
 storage-go/
 ├── types/                   # 零依赖的公共类型包
-│   ├── interface.go         # Storage / MultipartUploader / Pager 接口
-│   ├── path.go              # StoragePath 类型
+│   ├── interface.go         # 子 interface + Storage 顶层组合
+│   ├── path.go              # StoragePath interface
 │   ├── errors.go            # sentinel error
-│   ├── options.go           # PutOption / GetOption / ListOption / CopyOption
-│   └── types.go             # ObjectMeta / ListResult / PartInfo / UploadID 等
+│   ├── options.go           # 各类 Option
+│   └── types.go             # ObjectMeta / Object / ListResult / PartInfo / UploadID
 │
 ├── driver/
-│   ├── minio/               # MinIO（基于 minio-go SDK）
-│   ├── cos/                 # 腾讯云 COS（基于 cos-go-sdk-v5）
-│   ├── weedfs/              # SeaweedFS（基于 minio-go SDK，S3 兼容）
-│   ├── local/               # 本地文件系统（标准库）
+│   ├── minio/               # MinIO（init() 中调用 registry.Register）
+│   ├── cos/                 # 腾讯云 COS（init() 中调用 registry.Register）
+│   ├── weedfs/              # SeaweedFS（init() 中调用 registry.Register）
+│   ├── local/               # 本地文件系统（init() 中调用 registry.Register）
 │   ├── internal/            # 轻量 S3 协议适配层：错误码映射、ETag 工具
+│   ├── registry/            # 驱动注册表（被 driver/* 和主包依赖）
 │   └── storagetest/         # 通用 driver 一致性测试套件
 │
-├── storage.go               # Config 定义、DriverType 常量、New 工厂
+├── storage.go               # Config 定义、DriverType 常量、New 工厂（查 registry）
 ├── client.go                # Client 封装（bucket 注入、UploadObject 高层封装）
 ├── path.go                  # 类型别名重导出
 ├── errors.go                # 类型别名重导出
@@ -58,32 +60,45 @@ storage-go/
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   调用方 (app)                        │
-│              import "storage-go"                     │
+│        import "storage-go"                           │
+│        import _ "storage-go/driver/minio"            │
 └──────────────────────┬──────────────────────────────┘
                        │
-┌──────────────────────▼──────────────────────────────┐
-│              主包 storage-go                         │
-│   storage.go / client.go / 类型别名重导出             │
-│   import types + import driver/*                     │
-└────────┬────────────────────────┬───────────────────┘
-         │                        │
-         ▼                        ▼
-┌────────────────┐   ┌────────────────────────────────┐
-│  storage-go/   │   │        storage-go/driver/*      │
-│    types       │◄──│  minio / cos / weedfs / local   │
-│ （零依赖）      │   │  各自 import "storage-go/types" │
-└────────────────┘   └────────────────────────────────┘
+       ┌───────────────┼────────────────┐
+       ▼                                ▼
+┌──────────────────┐         ┌──────────────────────┐
+│  主包 storage-go │         │   driver/registry    │
+│  storage.go/...  │────────▶│  (Register / Get)    │
+│  不再 import     │         └──────────┬───────────┘
+│  driver/*        │                    │ 注册/查找
+└────────┬─────────┘                    │
+         │                              │
+         └──────────────┬───────────────┘
+                        ▼
+┌──────────────────────────────────────────────────┐
+│                  types (零依赖)                    │
+└──────────────────────────────────────────────────┘
+                        ▲
+                        │ import types
+┌───────────────────────┴──────────────────────────┐
+│ driver/* (minio/cos/weedfs/local)                  │
+│ 各自依赖 types + driver/registry + driver/internal  │
+│ + 各自 SDK                                        │
+└────────────────────────────────────────────────────┘
 ```
+
+> **关键变更**：主包不再 `import driver/*`；调用方通过 `blank import` 按需引入驱动，避免未使用的 SDK 进入二进制。详见第 X 章「驱动注册表」。
 
 ### 2.3 依赖规则
 
 | 包 | 允许 import | 禁止 import |
 |---|---|---|
 | `types` | 仅标准库 | 任何业务包 |
-| `driver/*` | `types`、各自 SDK、标准库 | 主包、其他 driver |
-| `driver/internal` | `types`、标准库 | 主包、driver |
-| `driver/storagetest` | `types`、标准库、testify | 主包、driver |
-| 主包 | `types`、`driver/*`、`driver/internal` | 无限制 |
+| `driver/registry` | `types`、标准库 | `driver/*`、主包 |
+| `driver/*` | `types`、`driver/registry`、`driver/internal`、各自 SDK | 主包、其他 driver |
+| `driver/internal` | `types`、标准库 | `driver/*`、主包 |
+| `driver/storagetest` | `types`、标准库、testify | `driver/*`、主包 |
+| 主包 | `types`、`driver/registry` | `driver/*` |
 
 ### 2.4 类型别名重导出
 
@@ -145,9 +160,6 @@ type Config struct {
     // 本地存储（DriverLocal 时必填）
     BaseDir string
 
-    // Local driver 元数据存储策略："" | "xattr" | "json"
-    LocalMetaStore string
-
     // 高级配置
     Timeout      time.Duration
     MaxRetries   int
@@ -156,22 +168,17 @@ type Config struct {
 
 func (c *Config) validate() error { /* ... */ }
 
+// New 通过 driver/registry 查找驱动工厂；驱动需由调用方 blank import 注入。
+// 例如：import _ "storage-go/driver/minio"
 func New(cfg Config) (Storage, error) {
     if err := cfg.validate(); err != nil {
         return nil, err
     }
-    switch cfg.Driver {
-    case DriverMinio:
-        return driver_minio.New(cfg)
-    case DriverCOS:
-        return driver_cos.New(cfg)
-    case DriverWeedFS:
-        return driver_weedfs.New(cfg)
-    case DriverLocal:
-        return driver_local.New(cfg)
-    default:
-        return nil, fmt.Errorf("%w: unknown driver %q", ErrInvalidConfig, cfg.Driver)
+    f, ok := registry.Get(string(cfg.Driver))
+    if !ok {
+        return nil, fmt.Errorf("%w: driver %q not registered (did you forget blank import?)", ErrInvalidConfig, cfg.Driver)
     }
+    return f(cfg)
 }
 ```
 
@@ -195,14 +202,9 @@ import (
     "sort"
     "sync"
     "sync/atomic"
-    "time"
 
     "golang.org/x/sync/errgroup"
 
-    "github.com/yangguang/storage-go/driver/cos"
-    "github.com/yangguang/storage-go/driver/local"
-    "github.com/yangguang/storage-go/driver/minio"
-    "github.com/yangguang/storage-go/driver/weedfs"
     "github.com/yangguang/storage-go/types"
 )
 
@@ -226,6 +228,11 @@ func (c *Client) PutObject(ctx context.Context, key string, r io.Reader, size in
 
 ```go
 // 方式 1：Client 封装（推荐，bucket 注入）
+import (
+    "storage-go"
+    _ "storage-go/driver/minio"   // blank import 触发 driver 注册
+)
+
 c, _ := storage.New(storage.Config{
     Driver:    storage.DriverMinio,
     Endpoint:  "play.min.io",
@@ -235,12 +242,15 @@ c, _ := storage.New(storage.Config{
     Bucket:    "avatars",
 })
 meta, _ := c.PutObject(ctx, "user-123.png", reader, size, storage.WithContentType("image/png"))
+fmt.Println(meta.Path.Path(), meta.Path.URL())
 
-// 方式 2：Storage 接口（直接使用）
+// 方式 2：Storage 接口（直接使用，需要时切换 bucket）
 s, _ := storage.New(storage.Config{Driver: storage.DriverMinio, ...})
-meta, _ := s.PutObject(ctx, "media-prod", "user-123.png", reader, size)
+meta, _ = s.PutObject(ctx, "media-prod", "user-123.png", reader, size)
 
-// 切换存储：只改 Config，业务代码零修改
+// 切换存储：只改 import + Config，业务代码零修改
+// import _ "storage-go/driver/cos"   // 替换 blank import
+
 c, _ = storage.New(storage.Config{
     Driver:    storage.DriverCOS,
     Endpoint:  "cos.ap-shanghai.myqcloud.com",
@@ -250,6 +260,79 @@ c, _ = storage.New(storage.Config{
     Bucket:    "avatars",
 })
 ```
+
+### 3.4 驱动注册表（registry）
+
+主包不 import `driver/*`；通过 `driver/registry` 包解耦：各 driver 在 `init()` 中注册自身，`storage.New()` 在运行时查找。
+
+```go
+// driver/registry/registry.go
+package registry
+
+import (
+    "sync"
+
+    "github.com/yangguang/storage-go/types"
+)
+
+// Factory 是 driver 工厂函数，接收 driver 自己的 Config，返回 types.Storage
+type Factory func(cfg any) (types.Storage, error)
+
+var (
+    mu      sync.RWMutex
+    drivers = map[string]Factory{}
+)
+
+// Register 由各 driver 在 init() 中调用
+func Register(name string, f Factory) {
+    mu.Lock()
+    defer mu.Unlock()
+    drivers[name] = f
+}
+
+// Get 由主包 storage.New() 调用
+func Get(name string) (Factory, bool) {
+    mu.RLock()
+    defer mu.RUnlock()
+    f, ok := drivers[name]
+    return f, ok
+}
+```
+
+**driver 子包注册示例**：
+
+```go
+// driver/minio/driver.go
+package minio
+
+import "github.com/yangguang/storage-go/driver/registry"
+
+func init() {
+    registry.Register("minio", New)
+}
+```
+
+**主包 `New` 工厂**：
+
+```go
+// storage.go
+func New(cfg Config) (types.Storage, error) {
+    if err := cfg.validate(); err != nil {
+        return nil, err
+    }
+    f, ok := registry.Get(string(cfg.Driver))
+    if !ok {
+        return nil, fmt.Errorf("%w: driver %q not registered (did you forget blank import?)",
+            ErrInvalidConfig, cfg.Driver)
+    }
+    return f(cfg)
+}
+```
+
+> **设计权衡：**
+> - 调用方按需 `import _ "storage-go/driver/<name>"`，未使用的 driver SDK 不会进入二进制
+> - 忘记 blank import 时，错误信息明确提示，定位成本低
+> - 注册表用全局 map + RWMutex，并发安全；适合启动期一次性注册
 
 ---
 
@@ -264,18 +347,13 @@ c, _ = storage.New(storage.Config{
 | `SchemeS3` | S3 语义网络存储 | minio、cos、weedfs |
 | `SchemeFile` | 本地文件系统存储 | local |
 
-### 4.2 结构定义
+### 4.2 StoragePath 接口
+
+`StoragePath` 改为 **interface**，由各 driver 实现具体类型。`Path()` 返回带协议语义的路径，`URL()` 返回可访问的 HTTP/file URL。
 
 ```go
 // types/path.go
 package types
-
-import (
-    "fmt"
-    "path"
-    "regexp"
-    "strings"
-)
 
 type AccessScheme string
 
@@ -284,50 +362,85 @@ const (
     SchemeFile AccessScheme = "file"
 )
 
+// StoragePath 由 driver 在返回值中写入，调用方只读。
+// Path() 返回协议路径（如 "s3://bucket/key"），URL() 返回可访问 URL（如 "https://cdn/bucket/key"）。
+type StoragePath interface {
+    Path() string
+    URL() string
+}
+```
+
+**driver 实现示例**（s3 driver）：
+
+```go
+// driver/minio/path.go
+type s3Path struct {
+    bucket, key, baseURL string
+}
+
+func (p *s3Path) Path() string {
+    return fmt.Sprintf("s3://%s/%s", p.bucket, p.key)
+}
+
+func (p *s3Path) URL() string {
+    if p.baseURL == "" {
+        return ""
+    }
+    return strings.TrimRight(p.baseURL, "/") + "/" + p.bucket + "/" + p.key
+}
+```
+
+**driver 实现示例**（local driver）：
+
+```go
+// driver/local/path.go
+type filePath struct {
+    bucket, key, absDir string // absDir = BaseDir
+    httpBaseURL         string // 可选
+}
+
+func (p *filePath) Path() string {
+    return fmt.Sprintf("file://%s/%s/%s", p.absDir, p.bucket, p.key)
+}
+
+func (p *filePath) URL() string {
+    if p.httpBaseURL != "" {
+        return strings.TrimRight(p.httpBaseURL, "/") + "/" + p.bucket + "/" + p.key
+    }
+    return p.Path()
+}
+```
+
+**Bucket / Key 校验**（在 driver 内部 `NewPath` 时执行）：
+
+```go
+// driver/internal/pathcheck.go
 var bucketRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`)
 
-type StoragePath struct {
-    Scheme AccessScheme // 由 driver 写入
-    Bucket string       // S3：bucket 名；File：bucket 名（保持语义一致）
-    Key    string       // S3：对象 key（不以 / 开头）；File：相对路径（不带根目录前缀）
-}
-
-func (p StoragePath) String() string {
-    return fmt.Sprintf("%s://%s/%s", p.Scheme, p.Bucket, p.Key)
-}
-
-func (p StoragePath) IsLocal() bool { return p.Scheme == SchemeFile }
-
-func (p StoragePath) Join(elem ...string) StoragePath {
-    cp := p
-    cp.Key = path.Join(append([]string{p.Key}, elem...)...)
-    return cp
-}
-
-func (p StoragePath) Validate() error {
-    if p.Bucket == "" {
+func ValidateBucket(bucket string) error {
+    if bucket == "" {
         return fmt.Errorf("%w: bucket is empty", ErrInvalidPath)
     }
-    if !bucketRegex.MatchString(p.Bucket) {
-        return fmt.Errorf("%w: invalid bucket %q", ErrInvalidPath, p.Bucket)
-    }
-    if p.Key == "" {
-        return fmt.Errorf("%w: key is empty", ErrInvalidPath)
-    }
-    if strings.HasPrefix(p.Key, "/") {
-        return fmt.Errorf("%w: key must not start with /", ErrInvalidPath)
-    }
-    if strings.Contains(p.Key, "..") {
-        return fmt.Errorf("%w: key must not contain ..", ErrInvalidPath)
-    }
-    if strings.Contains(p.Key, "//") {
-        return fmt.Errorf("%w: key must not contain //", ErrInvalidPath)
+    if !bucketRegex.MatchString(bucket) {
+        return fmt.Errorf("%w: invalid bucket %q", ErrInvalidPath, bucket)
     }
     return nil
 }
 
-func ParsePath(raw string) (StoragePath, error) {
-    // 解析 scheme 前缀，按 / 分隔 bucket 与 key，调用 Validate
+func ValidateKey(key string) error {
+    if key == "" {
+        return fmt.Errorf("%w: key is empty", ErrInvalidPath)
+    }
+    if strings.HasPrefix(key, "/") {
+        return fmt.Errorf("%w: key must not start with /", ErrInvalidPath, key)
+    }
+    if strings.Contains(key, "..") {
+        return fmt.Errorf("%w: key must not contain ..", ErrInvalidPath, key)
+    }
+    if strings.Contains(key, "//") {
+        return fmt.Errorf("%w: key must not contain //", ErrInvalidPath, key)
+    }
+    return nil
 }
 ```
 
@@ -336,55 +449,48 @@ func ParsePath(raw string) (StoragePath, error) {
 - `Bucket` 匹配 `^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`（与 S3 规范一致）
 - `Key` 不以 `/` 开头、不含 `..`、不含连续 `//`
 - `Key` 推荐结构：`{业务域}/{日期}/{hash或ID}.{ext}`，例如 `user-avatar/20240601/a3f9c2.webp`
-- `Scheme` 由 driver 写入，调用方不需要手动设置
+- `StoragePath` 实例由 driver 在 `PutObject / GetObject / CopyObject` 等返回值的 `meta.Path` 中携带，调用方**只读**
+- `StoragePath` 校验发生在 driver 内部 `NewPath(bucket, key)` 时；不暴露给业务调用方
 
 ### 4.4 路径示例
 
 ```go
 // MinIO 上传后的返回路径
-path := StoragePath{Scheme: SchemeS3, Bucket: "media-prod", Key: "user-avatar/20240601/a3f9c2.webp"}
-path.String()     // "s3://media-prod/user-avatar/20240601/a3f9c2.webp"
-path.IsLocal()    // false
+meta, _ := s.PutObject(ctx, "media-prod", "user-avatar/20240601/a3f9c2.webp", r, size)
+meta.Path.Path() // "s3://media-prod/user-avatar/20240601/a3f9c2.webp"
+meta.Path.URL()  // "https://cdn.example.com/media-prod/user-avatar/20240601/a3f9c2.webp"
 
-// Local 上传后的返回路径（BaseDir="/tmp/storage"）
-path := StoragePath{Scheme: SchemeFile, Bucket: "uploads", Key: "user-avatar/20240601/a3f9c2.webp"}
-path.String()  // "file://uploads/user-avatar/20240601/a3f9c2.webp"
-// local driver 内部通过 driver 自身方法将 Key 映射到绝对路径
+// Local 上传后的返回路径（BaseDir="/data/storage", HTTPBaseURL 已配置）
+meta, _ := s.PutObject(ctx, "uploads", "user-avatar/20240601/a3f9c2.webp", r, size)
+meta.Path.Path() // "file:///data/storage/uploads/user-avatar/20240601/a3f9c2.webp"
+meta.Path.URL()  // "http://static.local/uploads/user-avatar/20240601/a3f9c2.webp"
 
-// 非法路径
-ParsePath("s3://bucket/../traversal")  // ErrInvalidPath
-ParsePath("s3://Bucket/key")           // ErrInvalidPath（bucket 大小写敏感）
-ParsePath("s3://bucket//double-slash") // ErrInvalidPath
+// Local（未配置 HTTPBaseURL）— URL 退化为 file://
+meta.Path.URL()  // "file:///data/storage/uploads/user-avatar/20240601/a3f9c2.webp"
 ```
 
 ### 4.5 典型用法
 
 ```go
-// 方式 1：直接判断 Scheme
 meta, _ := s.PutObject(ctx, "media-prod", "avatar/user123.webp", r, size,
     storage.WithContentType("image/webp"),
 )
-switch meta.Path.Scheme {
-case storage.SchemeS3:
-    url := "https://cdn.example.com/" + meta.Path.Bucket + "/" + meta.Path.Key
-    saveURLToDB(url)
-case storage.SchemeFile:
-    saveURLToDB(meta.Path.String())
-}
 
-// 方式 2：推荐使用 GetPublicURL
-db.Save(meta.Path.String()) // 存储 "s3://media-prod/avatar/user123.webp"
-publicURL, _ := s.GetPublicURL(ctx, meta.Path)
+// 推荐用法：存 Path() 进 DB（协议无关），渲染时调 URL() 转可访问地址
+db.Save(meta.Path.Path()) // 存 "s3://media-prod/avatar/user123.webp"
+publicURL := meta.Path.URL()
 // → "https://cdn.example.com/media-prod/avatar/user123.webp"
 ```
+
+> **关于 `NewPath`：** driver 实现类型上保留 `NewPath(bucket, key)` 方法（包内或公开），用于 driver 内部构造返回值中的 `StoragePath`；不在顶层 `Storage` interface 中暴露。业务调用方**应**通过 `meta.Path` 拿路径，不需要凭空构造。`CopyObject` 的 `src` 直接传上一步返回的 `meta.Path` 即可。
 
 ---
 
 ## 5. 核心接口（Storage）
 
-接口采用**组合方式**：`Storage` 嵌入 `MultipartUploader` 与 `io.Closer`，各 driver 实现完整接口。
+接口按职责拆分为多个子 interface，顶层 `Storage` 由它们组合而成。各 driver 实现**完整**的 `Storage`（即所有子 interface），但调用方可按需依赖子 interface 做 mock 或扩展。
 
-### 5.1 接口定义
+### 5.1 子接口（按职责拆分）
 
 ```go
 // types/interface.go
@@ -396,38 +502,38 @@ import (
     "time"
 )
 
-type Storage interface {
-    // Object 操作
-    PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...PutOption) (*ObjectMeta, error)
+// 读：单对象读
+type ObjectReader interface {
     GetObject(ctx context.Context, bucket, key string, opts ...GetOption) (*Object, error)
     HeadObject(ctx context.Context, bucket, key string) (*ObjectMeta, error)
+}
+
+// 写：单/批对象写、复制
+type ObjectWriter interface {
+    PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...PutOption) (*ObjectMeta, error)
     DeleteObject(ctx context.Context, bucket, key string) error
     DeleteObjects(ctx context.Context, bucket string, keys []string) error
     CopyObject(ctx context.Context, src, dst StoragePath, opts ...CopyOption) (*ObjectMeta, error)
-
-    // 列举（一次性返回完整页）
-    ListObjects(ctx context.Context, bucket, prefix string, opts ...ListOption) (*ListResult, error)
-
-    // 流式分页
-    ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...ListOption) (Pager[ObjectMeta], error)
-
-    // 预签名（不支持则返回 ErrNotSupported）
-    PresignGet(ctx context.Context, bucket, key string, expire time.Duration) (string, error)
-    PresignPut(ctx context.Context, bucket, key string, expire time.Duration) (string, error)
-
-    // 公开 URL 转换
-    //   SchemeS3 + PublicDomain 已配置：返回 "https://cdn/bucket/key"
-    //   SchemeS3 + PublicDomain 未配置：返回 ErrInvalidConfig
-    //   SchemeFile：返回 file:// 形式（由 driver 自行决定）
-    GetPublicURL(ctx context.Context, path StoragePath) (string, error)
-
-    // 路径构造（由 driver 写入 Scheme）
-    NewPath(bucket, key string) StoragePath
-
-    MultipartUploader
-    io.Closer
 }
 
+// 列：单页 + 流式分页
+type ObjectLister interface {
+    ListObjects(ctx context.Context, bucket, prefix string, opts ...ListOption) (*ListResult, error)
+    ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...ListOption) (Pager[ObjectMeta], error)
+}
+
+// URL：公开 URL 与预签名（不支持则返回 ErrNotSupported）
+type URLBuilder interface {
+    // GetPublicURL：
+    //   SchemeS3 + PublicDomain 已配置：返回 "https://cdn/bucket/key"
+    //   SchemeS3 + PublicDomain 未配置：返回 ErrInvalidConfig
+    //   SchemeFile：返回 file:// 形式（由 driver 决定）
+    GetPublicURL(ctx context.Context, path StoragePath) (string, error)
+    PresignGet(ctx context.Context, bucket, key string, expire time.Duration) (string, error)
+    PresignPut(ctx context.Context, bucket, key string, expire time.Duration) (string, error)
+}
+
+// 分片上传（不常用，单独成块）
 type MultipartUploader interface {
     CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...PutOption) (UploadID, error)
     UploadPart(ctx context.Context, bucket, key string, id UploadID, partNum int, r io.Reader, size int64) (*PartInfo, error)
@@ -436,7 +542,48 @@ type MultipartUploader interface {
 }
 ```
 
-### 5.2 方法命名与 S3 API 对照
+### 5.2 顶层 `Storage`（组合）
+
+```go
+// 顶层接口：组合基础常用（Reader/Writer/Lister/URLBuilder）+ 不常用（MultipartUploader）+ Closer
+// 注意：不含 NewPath（NewPath 是 driver 内部方法，业务调用方通过 meta.Path 拿路径）
+type Storage interface {
+    ObjectReader
+    ObjectWriter
+    ObjectLister
+    URLBuilder
+    MultipartUploader
+    io.Closer
+}
+```
+
+### 5.3 职责对照
+
+| 子 interface | 包含方法 | 适用场景 | driver 实现要求 |
+|---|---|---|---|
+| `ObjectReader` | `GetObject`, `HeadObject` | 下载、查看元数据 | 必须实现 |
+| `ObjectWriter` | `PutObject`, `DeleteObject`, `DeleteObjects`, `CopyObject` | 上传、删除、复制 | 必须实现 |
+| `ObjectLister` | `ListObjects`, `ListObjectsPage` | 列举 | 必须实现 |
+| `URLBuilder` | `GetPublicURL`, `PresignGet`, `PresignPut` | 公开 URL、临时签名 | local driver 的 `Presign*` 返回 `ErrNotSupported` |
+| `MultipartUploader` | `Create/Upload/Complete/AbortMultipartUpload` | 大文件分片 | 必须实现（local driver 用文件级方案） |
+
+### 5.4 NewPath 的位置
+
+`NewPath(bucket, key) StoragePath` 是 driver 内部用于构造返回值中 `StoragePath` 的工厂方法，**不**出现在 `types` 的任何 interface 中。driver 实现类型上保留此方法（包内或公开），业务调用方**应**通过 `meta.Path` 拿路径；当 `CopyObject` 需要 `src` 时直接传上一步返回的 `meta.Path` 即可。
+
+```go
+// driver/minio/driver.go
+type Driver struct{ ... }
+
+// NewPath 暴露在 driver 具体类型上，构造 s3Path 实例
+func (d *Driver) NewPath(bucket, key string) types.StoragePath {
+    return &s3Path{bucket: bucket, key: key, baseURL: d.cfg.PublicDomain}
+}
+```
+
+> driver 内部使用 `src` / `dst`（`StoragePath` interface）时，需类型断言到自己实现的具体类型以拿到 `bucket` / `key` 等内部字段；类型不匹配时返回 `ErrInvalidPath`。详见 12.5 的 `CopyObject` 示例。
+
+### 5.5 方法命名与 S3 API 对照
 
 | 接口方法 | 对标 S3 API | 说明 |
 |---|---|---|
@@ -449,7 +596,7 @@ type MultipartUploader interface {
 | `ListObjectsPage` | `ListObjectsV2` | 流式分页 |
 | `CopyObject` | `CopyObject` | 服务端复制 |
 | `CreateMultipartUpload` | `CreateMultipartUpload` | 初始化分片 |
-| `UploadPart` | `UploadPart` | 上传分片 |
+| `UploadPart` | `UploadObject` (Part) | 上传分片 |
 | `CompleteMultipartUpload` | `CompleteMultipartUpload` | 合并 |
 | `AbortMultipartUpload` | `AbortMultipartUpload` | 取消 |
 | `PresignGet` / `PresignPut` | `GetObject` / `PutObject`（presign） | 预签名 URL |
@@ -656,18 +803,28 @@ if errors.Is(err, storage.ErrNotFound) {
 package minio
 
 import (
+    "context"
+    "io"
+
     miniogo "github.com/minio/minio-go/v7"
     "github.com/minio/minio-go/v7/pkg/credentials"
+
     "github.com/yangguang/storage-go/driver/internal"
+    "github.com/yangguang/storage-go/driver/registry"
     "github.com/yangguang/storage-go/types"
 )
 
-type driver struct {
+// Driver 实现 types.Storage；具体类型导出，NewPath 等扩展方法挂在上面
+type Driver struct {
     client *miniogo.Client
-    cfg    storage.Config
+    cfg    Config // driver 自己的 Config，转换自 storage.Config
 }
 
-func New(cfg storage.Config) (types.Storage, error) {
+func init() {
+    registry.Register("minio", New)
+}
+
+func New(cfg Config) (types.Storage, error) {
     c, err := miniogo.New(cfg.Endpoint, &miniogo.Options{
         Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
         Secure: cfg.UseSSL,
@@ -675,10 +832,10 @@ func New(cfg storage.Config) (types.Storage, error) {
     if err != nil {
         return nil, err
     }
-    return &driver{client: c, cfg: cfg}, nil
+    return &Driver{client: c, cfg: cfg}, nil
 }
 
-func (d *driver) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...types.PutOption) (*types.ObjectMeta, error) {
+func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...types.PutOption) (*types.ObjectMeta, error) {
     o := &types.PutOptions{}
     for _, opt := range opts {
         opt(o)
@@ -691,11 +848,25 @@ func (d *driver) PutObject(ctx context.Context, bucket, key string, r io.Reader,
         return nil, internal.WrapMinioErr(err)
     }
     return &types.ObjectMeta{
-        Path: d.NewPath(bucket, key),
-        Size: info.Size,
-        ETag: info.ETag,
+        Path:        d.NewPath(bucket, key),  // 调 driver 自己的 NewPath（非 interface 方法）
+        Size:        info.Size,
+        ETag:        info.ETag,
+        ContentType: o.ContentType,
     }, nil
 }
+
+// NewPath 在 driver 具体类型上，不在 types.Storage interface 中
+func (d *Driver) NewPath(bucket, key string) types.StoragePath {
+    return &s3Path{bucket: bucket, key: key, baseURL: d.cfg.PublicDomain}
+}
+
+// s3Path 实现 types.StoragePath
+type s3Path struct {
+    bucket, key, baseURL string
+}
+
+func (p *s3Path) Path() string { return "s3://" + p.bucket + "/" + p.key }
+func (p *s3Path) URL() string  { return strings.TrimRight(p.baseURL, "/") + "/" + p.bucket + "/" + p.key }
 ```
 
 ### 9.2 driver/internal：错误码映射
@@ -707,7 +878,9 @@ package internal
 import (
     "errors"
     "fmt"
+
     miniogo "github.com/minio/minio-go/v7"
+
     "github.com/yangguang/storage-go/types"
 )
 
@@ -827,13 +1000,37 @@ func RunSuite(t *testing.T, s types.Storage, bucket string) {
 }
 ```
 
-各 driver 集成测试：
+各 driver 集成测试（记得 blank import 对应 driver 包）：
 
 ```go
+// driver/minio/minio_test.go
+package minio_test
+
+import (
+    "testing"
+
+    "github.com/yangguang/storage-go"
+    "github.com/yangguang/storage-go/driver/minio"      // 显式 import 触发 init
+    "github.com/yangguang/storage-go/driver/storagetest"
+)
+
 func TestDriverMinio(t *testing.T) {
     s, _ := storage.New(storage.Config{Driver: storage.DriverMinio, ...})
     storagetest.RunSuite(t, s, "test-bucket")
 }
+```
+
+```go
+// driver/local/local_test.go
+package local_test
+
+import (
+    "testing"
+
+    "github.com/yangguang/storage-go"
+    "github.com/yangguang/storage-go/driver/local"       // 显式 import 触发 init
+    "github.com/yangguang/storage-go/driver/storagetest"
+)
 
 func TestDriverLocal(t *testing.T) {
     s, _ := storage.New(storage.Config{Driver: storage.DriverLocal, BaseDir: "/tmp/storage-test"})
@@ -843,90 +1040,35 @@ func TestDriverLocal(t *testing.T) {
 
 ---
 
-## 12. Local Driver 功能特性取舍选项
+## 12. Local Driver 实现细节
 
-本章为 Local Driver 的核心实现特性提供多套方案与权衡分析。开发者根据业务场景选择具体实现方向。
+Local driver 基于标准库 `os` / `io` 实现，不依赖任何外部 SDK。下面的特性方案已经收敛为单一实现。
 
-### 12.1 路径模型
+### 12.1 目录与文件布局
 
-**方案 A：扁平映射（推荐，默认）**
-
-```
-BaseDir/{bucket}/{key}
-例如：BaseDir=/data/storage, bucket=avatars, key=user/123.png
-     → /data/storage/avatars/user/123.png
-```
-
-- 优点：路径直观，可直接用 `cp` / `rsync` 等系统工具操作
-- 缺点：bucket 名变化时需迁移目录
-
-**方案 B：数据/元数据分离**
+**扁平映射 + 独立元数据目录**：
 
 ```
 BaseDir/
-├── data/{bucket}/{key}
-└── meta/{bucket}/{key-hash}.json
+├── data/
+│   └── {bucket}/{key}            # 对象数据
+├── meta/
+│   └── {bucket}/{key-hash}.json  # 对象元数据
+└── .multipart/
+    └── {uploadID}/part-{n:04d}   # 分片上传临时区
 ```
 
-- 优点：元数据可独立管理，支持外部修改检测
-- 缺点：目录树复杂，运维成本高
+- 数据文件：`{BaseDir}/data/{bucket}/{key}`，与 S3 路径语义一一对应
+- 元数据文件：`{BaseDir}/meta/{bucket}/{sha1(key)}.json`（`key-hash` 使用 SHA-1 防路径过长与特殊字符）
+- 分片临时区：`.multipart/{uploadID}/` 下按 part number 命名
 
-**建议：** 默认采用方案 A；如需支持 ContentType / ETag / UserMeta 持久化，结合 12.2 的元数据策略使用方案 B。
+> BaseDir 缺失时 PutObject 等写操作返回 `ErrInvalidConfig`；HeadObject/GetObject 同样要求 BaseDir 存在。
 
-### 12.2 元数据持久化策略（可选项）
+### 12.2 元数据（独立 JSON 文件）
 
-local driver 默认无元数据持久化（ContentType 由文件扩展名推断，ETag 通过 mtime+size 计算）。如需完整 S3 语义支持，从以下三档中选择：
+固定使用独立 JSON 元数据文件，跨平台、S3 语义完整。**不**支持多档配置（`Config.LocalMetaStore` 字段已删除）。
 
-#### 档位 1：零持久化（最简实现，< 200 行）
-
-| 字段 | 策略 |
-|---|---|
-| ContentType | 文件扩展名推断（`mime.TypeByExtension`） |
-| ETag | 写入时流式计算 MD5，结果存内存 map（重启丢失） |
-| UserMeta | **不存储**（PutObject 时校验，GetObject 始终返回空） |
-| LastModified | `os.Stat` 实时获取 |
-
-- 适用场景：开发测试、临时缓存、demo
-- 优点：实现最简单，无额外 I/O
-- 缺点：重启后 ETag 失效、UserMeta 丢失
-
-#### 档位 2：xattr 扩展属性（Linux/macOS 优先）
-
-| 字段 | 策略 |
-|---|---|
-| ContentType | xattr `user.content_type` |
-| ETag | xattr `user.etag`（写入时计算并存储） |
-| UserMeta | xattr `user.meta.<key>` |
-| LastModified | `os.Stat` 实时获取 |
-
-```go
-import "golang.org/x/sys/unix"
-
-// 写入
-unix.Setxattr(path, "user.content_type", []byte(ct), 0)
-unix.Setxattr(path, "user.etag", []byte(etag), 0)
-
-// 读取
-buf := make([]byte, 256)
-n, _ := unix.Getxattr(path, "user.content_type", buf)
-ct := string(buf[:n])
-```
-
-- 适用场景：Linux/macOS 生产环境，文件系统支持 xattr
-- 优点：元数据与数据文件绑定，无额外文件
-- 缺点：Windows 不支持（需 `//go:build !windows` 隔离）；xattr 大小受文件系统限制（通常 64KB～1MB）
-
-#### 档位 3：独立 JSON 元数据文件（跨平台，最完整）
-
-目录结构：
-
-```
-BaseDir/
-├── data/{bucket}/{key}
-└── meta/{bucket}/{key-hash}.json
-```
-
-JSON Schema：
+**JSON Schema**：
 
 ```json
 {
@@ -941,69 +1083,99 @@ JSON Schema：
 }
 ```
 
-- 适用场景：跨平台部署、需完整 S3 语义兼容
-- 优点：参考 gofakes3，支持外部修改检测（比较 mtime+size）、支持任意元数据
-- 缺点：双写开销、目录树复杂
+**字段处理**：
 
-**实现建议：**
+| 字段 | 来源 |
+|---|---|
+| `key` | 写入时记录 |
+| `size` | PutObject 流式计算；与最终 `os.Stat` 一致 |
+| `etag` | PutObject 流式计算 MD5（16 字节原始 → 32 字符 hex） |
+| `content_type` | `PutOptions.ContentType`，缺省时为 `application/octet-stream` |
+| `last_modified` | PutObject 完成后 `time.Now().UTC()` |
+| `user_meta` | `PutOptions.UserMeta` |
+
+**实现示例**：
 
 ```go
-// Config 增加 MetaStore 选项
-type Config struct {
-    // ...
-    LocalMetaStore string // "" | "xattr" | "json"，默认 ""
+// driver/local/meta.go
+package local
+
+import (
+    "crypto/sha1"
+    "encoding/hex"
+    "encoding/json"
+    "os"
+    "path/filepath"
+)
+
+type metaFile struct {
+    Key          string            `json:"key"`
+    Size         int64             `json:"size"`
+    ETag         string            `json:"etag"`
+    ContentType  string            `json:"content_type"`
+    LastModified time.Time         `json:"last_modified"`
+    UserMeta     map[string]string `json:"user_meta,omitempty"`
+}
+
+func metaPath(baseDir, bucket, key string) string {
+    h := sha1.Sum([]byte(key))
+    return filepath.Join(baseDir, "meta", bucket, hex.EncodeToString(h[:])+".json")
+}
+
+func (d *Driver) writeMeta(bucket, key string, m metaFile) error {
+    p := metaPath(d.baseDir, bucket, key)
+    if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+        return err
+    }
+    data, _ := json.MarshalIndent(m, "", "  ")
+    return os.WriteFile(p, data, 0o644)
 }
 ```
 
-**取舍总结：**
+### 12.3 并发安全：per-bucket 分段锁
 
-| 档位 | 实现成本 | 跨平台 | S3 语义完整度 | 推荐场景 |
-|---|---|---|---|---|
-| 1（零持久化） | ⭐ | ✅ | ⭐⭐ | 开发测试 |
-| 2（xattr） | ⭐⭐ | ❌（仅 Unix） | ⭐⭐⭐ | Linux/macOS 生产 |
-| 3（JSON） | ⭐⭐⭐ | ✅ | ⭐⭐⭐⭐ | 跨平台生产 |
+每个 bucket 一把 `sync.RWMutex`，跨 bucket 写并发互不阻塞；bucket 锁表用 `sync.Map` 存放（避免 map 自身的锁竞争）。
 
-### 12.3 并发安全
+```go
+// driver/local/driver.go
+type Driver struct {
+    baseDir     string
+    bucketLocks sync.Map  // bucket string -> *sync.RWMutex
+    // ...
+}
 
-**方案 A：无锁（依赖 OS）**
+func (d *Driver) lock(bucket string) *sync.RWMutex {
+    v, _ := d.bucketLocks.LoadOrStore(bucket, &sync.RWMutex{})
+    return v.(*sync.RWMutex)
+}
 
-- 写操作：临时文件 + `os.Rename` 保证原子性
-- 读操作：无锁（OS 保证一致性）
-- 优点：性能最佳
-- 缺点：ListObjects 期间可能看到部分写入
+func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...types.PutOption) (*types.ObjectMeta, error) {
+    l := d.lock(bucket)
+    l.Lock()
+    defer l.Unlock()
+    // ... 写入 data + meta
+}
 
-**方案 B：全局 `sync.RWMutex`（推荐）**
+func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...types.GetOption) (*types.Object, error) {
+    l := d.lock(bucket)
+    l.RLock()
+    defer l.RUnlock()
+    // ... 读 data + meta
+}
+```
 
-- 写操作：`Lock`；读操作：`RLock`
-- 优点：避免 ListObjects 看到中间态
-- 缺点：写并发性能略降
+> ListObjects 期间持有读锁，避免看到部分写入；写并发按 bucket 隔离，不影响其他 bucket。
 
-**方案 C：per-bucket 分段锁**
-
-- 每个 bucket 一把 `sync.RWMutex`
-- 优点：跨 bucket 写并发互不阻塞
-- 缺点：实现复杂，map 需额外保护
-
-**取舍总结：**
-
-| 方案 | 实现成本 | 写并发性能 | 读并发性能 | 推荐场景 |
-|---|---|---|---|---|
-| A | ⭐ | ⭐⭐⭐ | ⭐⭐⭐ | 单进程、无并发列表 |
-| B | ⭐⭐ | ⭐⭐ | ⭐⭐⭐ | 通用场景 |
-| C | ⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐ | 多 bucket、高并发写 |
-
-### 12.4 MultipartUpload 实现
-
-**采用文件级方案（已确定）：**
+### 12.4 MultipartUpload（文件级方案）
 
 ```
-{RootDir}/.multipart/{uploadID}/part-{partNumber:04d}
+{BaseDir}/.multipart/{uploadID}/part-{partNumber:04d}
 ```
 
 | 阶段 | 实现 | 说明 |
 |---|---|---|
 | `CreateMultipartUpload` | 生成 UUID 作为 uploadID，创建临时目录 | `os.MkdirAll` |
-| `UploadPart` | 将 body 写入对应 part 文件 | 文件名用 `%04d` 确保按文件名排序即为正确顺序 |
+| `UploadPart` | 将 body 写入对应 part 文件（持有 bucket 写锁） | 文件名用 `%04d` 确保按文件名排序即为正确顺序 |
 | `CompleteMultipartUpload` | 按 PartNumber 升序拼接所有 part 文件写入目标路径 | 临时文件 + Rename 保证原子性，完成后删除临时目录 |
 | `AbortMultipartUpload` | 删除整个临时目录 | `os.RemoveAll` |
 
@@ -1015,40 +1187,65 @@ type Config struct {
 
 **可选优化：** 增加过期清理 goroutine，定期删除超过 7 天的孤儿 upload 目录。
 
-### 12.5 CopyObject 实现
+### 12.5 CopyObject
 
-**方案 A：`os.Link` 硬链接（同 bucket，零拷贝）**
+| 场景 | 实现 | 说明 |
+|---|---|---|
+| 同 bucket | `os.Link(srcPath, dstPath)` | 硬链接，零拷贝，毫秒级 |
+| 跨 bucket | `io.Copy` 流式复制 | 通用，与 S3 语义一致 |
 
 ```go
-if src.Bucket == dst.Bucket {
-    return os.Link(srcPath, dstPath)
+func (d *Driver) CopyObject(ctx context.Context, src, dst types.StoragePath, opts ...types.CopyOption) (*types.ObjectMeta, error) {
+    // StoragePath 是 interface，需断言到 driver 自己的具体类型
+    sp, ok := src.(*filePath)
+    if !ok {
+        return nil, fmt.Errorf("%w: src path type %T is not local", types.ErrInvalidPath, src)
+    }
+    dp, ok := dst.(*filePath)
+    if !ok {
+        return nil, fmt.Errorf("%w: dst path type %T is not local", types.ErrInvalidPath, dst)
+    }
+
+    srcAbs := d.absPath(sp.bucket, sp.key)
+    dstAbs := d.absPath(dp.bucket, dp.key)
+
+    if sp.bucket == dp.bucket {
+        if err := os.Link(srcAbs, dstAbs); err != nil {
+            return nil, err
+        }
+    } else {
+        // 持有两个 bucket 锁（按字典序防死锁）
+        first, second := sp.bucket, dp.bucket
+        if first > second { first, second = second, first }
+        d.lock(first).Lock()
+        d.lock(second).Lock()
+        defer d.lock(second).Unlock()
+        defer d.lock(first).Unlock()
+
+        in, _ := os.Open(srcAbs)
+        defer in.Close()
+        out, _ := os.OpenFile(dstAbs, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+        defer out.Close()
+        if _, err := io.Copy(out, in); err != nil { return nil, err }
+    }
+    // ... 写 meta
+    return &types.ObjectMeta{
+        Path: d.NewPath(dp.bucket, dp.key),
+        Size: ..., ETag: ...,
+    }, nil
 }
 ```
 
-- 优点：零拷贝，毫秒级
-- 缺点：仅限同 bucket；修改任一文件会互相影响（S3 无此问题）
-
-**方案 B：`io.Copy` 流式复制（跨 bucket 通用）**
-
-```go
-src, _ := os.Open(srcPath)
-dst, _ := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-io.Copy(dst, src)
-```
-
-- 优点：通用，与 S3 语义一致
-- 缺点：需读 + 写两份 I/O
-
-**建议：** 默认采用 A（同 bucket 走硬链接），跨 bucket 走 B。
+> **说明：** 因为 `StoragePath` 是 interface，driver 在使用 `src`/`dst` 时需要断言到自己的具体类型（`*filePath` / `*s3Path`），类型不匹配时返回 `ErrInvalidPath`。
 
 ### 12.6 GetPublicURL 行为
 
-| PublicDomain 配置 | SchemeFile 返回值 |
+| PublicDomain 配置 | URL() 返回值 |
 |---|---|
 | 未配置 | `file://{BaseDir}/{bucket}/{key}` |
-| 已配置（HTTPBaseURL） | `http(s)://{PublicDomain}/{bucket}/{key}` |
+| 已配置 | `http(s)://{PublicDomain}/{bucket}/{key}` |
 
-**建议：** 增加 `HTTPBaseURL` 字段（与 local_storage.md 一致），仅 local driver 识别，配置后返回 HTTP URL，否则返回 file:// 形式。
+实现见第 4 章 `filePath.URL()`。
 
 ---
 
@@ -1056,19 +1253,21 @@ io.Copy(dst, src)
 
 | 决策点 | 选择 | 理由 |
 |---|---|---|
-| driver 引入方式 | `storage.New(Config)` + `Config.Driver` switch | 调用方只依赖主包，切换存储只改配置，零代码修改 |
+| driver 引入方式 | **blank import + `driver/registry` 注册表** | 调用方按需引入驱动，未使用的 driver SDK 不会进入二进制 |
 | 抽象层 | `types` 子包 + 主包 type alias 重导出 | 避免 driver 与主包的 import cycle；调用方透明 |
 | 入口 API | 提供 `Storage`（裸接口）+ `Client`（bucket 注入） | 覆盖单 bucket 与多 bucket 两种场景 |
 | Bucket 参数 | 方法签名含 `bucket` 参数（与 S3 SDK 一致） | 符合 AWS S3 SDK 风格，便于迁移 |
-| 接口组合 | `Storage` 嵌入 `MultipartUploader` + `io.Closer` | 接口职责清晰，便于测试 mock |
-| 路径模型 | `StoragePath{Scheme, Bucket, Key}`，Scheme 为 `s3`/`file` | 携带协议语义，调用方感知网络 vs. 磁盘 |
+| 接口粒度 | 拆分为 `ObjectReader` / `ObjectWriter` / `ObjectLister` / `URLBuilder` / `MultipartUploader`，顶层 `Storage` 组合（不含 `NewPath`） | 接口隔离，调用方按需依赖；driver 实现完整 `Storage` |
+| `StoragePath` 形态 | **interface**，含 `Path()` / `URL()`，由 driver 实现 | driver 决定协议路径与公开 URL，调用方透明；可扩展 HTTP/file 等不同形态 |
+| `NewPath` 位置 | driver 实现类型上（非 `types` interface） | 调用方通过 `meta.Path` 拿路径，不需要凭空构造；保留 driver 内部工厂方法 |
 | Scheme 设置方 | driver 写入，调用方只读 | 避免调用方误设 |
 | CopyObject 入参 | `src, dst StoragePath` | 强类型，比纯字符串安全 |
 | ListObjects | `ListResult`（一次一页）+ `Pager[T]`（流式） | 两种使用模式可选 |
-| URL 构建 | `GetPublicURL(ctx, path StoragePath)` | 由 driver 基于 Config 拼接，调用方无需感知 |
+| URL 构建 | `URLBuilder` 子 interface（`GetPublicURL` / `PresignGet` / `PresignPut`） | 由 driver 基于 Config 拼接，调用方无需感知 |
 | Config 扩展 | `ExtraOptions map[string]string` | 承接 driver 特有参数 |
-| Local 元数据 | 三档可配置（零持久化 / xattr / JSON） | 适配不同部署场景，详见 12.2 |
-| Local Multipart | 文件级（临时目录） | 支持大文件，重启可恢复 |
+| Local 元数据 | **固定 JSON 文件**（`{BaseDir}/meta/{bucket}/{key-hash}.json`） | 跨平台、S3 语义完整；删除 `Config.LocalMetaStore` 多档配置 |
+| Local 并发安全 | **per-bucket 分段锁**（`sync.Map` 存放 `*sync.RWMutex`） | 跨 bucket 写并发互不阻塞；bucket 锁表用 sync.Map 避免自身竞争 |
+| Local Multipart | 文件级（`.multipart/{uploadID}/part-{n:04d}`） | 支持大文件，重启可恢复 |
 | 错误处理 | sentinel error + `errors.Is` | 屏蔽底层差异 |
 | 重试策略 | 客户端层 `MaxRetries` 字段，driver 可选实现 | 简单可控 |
 
@@ -1080,9 +1279,11 @@ io.Copy(dst, src)
 | COS driver | `github.com/tencentyun/cos-go-sdk-v5` | 官方 SDK，S3 兼容 |
 | SeaweedFS driver | `github.com/minio/minio-go/v7` | S3 API 兼容，复用 MinIO SDK |
 | Local driver | 标准库 `os` / `io` | 无额外依赖 |
-| xattr（可选） | `golang.org/x/sys/unix` | 仅 Unix 平台 |
+| 驱动注册 | `sync`（标准库） | `sync.Map` + `sync.RWMutex` 实现注册表 |
 | 并发分片 | `golang.org/x/sync/errgroup` | 错误传播 + ctx 取消 |
 | 测试 | `testing` + `github.com/stretchr/testify` | 断言与 suite |
+
+> xattr 依赖 `golang.org/x/sys/unix` 已在 Local driver 收敛中移除。
 
 ## 15. 关键风险与应对
 
@@ -1095,17 +1296,7 @@ io.Copy(dst, src)
 | 分片泄漏 | 失败后未 Abort，已上传分片持续计费 | `UploadObject` 封装保证任何错误路径触发 Abort；建议存储侧配置 Lifecycle 兜底 |
 | Local Presign | 本地文件无法生成签名 URL | 明确返回 `ErrNotSupported`，调用方 `errors.Is` 后降级 |
 | ETag 双引号 | S3 规范要求 ETag 保留双引号（`"abc123"`） | driver 实现规范中明确要求统一保留双引号，storagetest 覆盖校验 |
-| xattr 兼容性 | Windows / 部分文件系统不支持 | `//go:build !windows` 标签隔离，自动降级到零持久化档位 |
-
-## 16. 里程碑
-
-| 阶段 | 交付物 | 目标周期 |
-|---|---|---|
-| M1 | `types` 包（接口 + StoragePath + errors + options + types） + storagetest 框架 | Week 1 |
-| M2 | MinIO driver（含分片 + Presign + GetPublicURL）+ storagetest 全套 | Week 2 |
-| M3 | COS / SeaweedFS driver | Week 3 |
-| M4 | Local driver（含分片 + 元数据持久化可选项）+ Client.UploadObject 高层封装 | Week 4 |
-| M5 | Range Get、重试策略、文档、示例、CI | Week 5 |
+| 忘记 blank import | 业务方只 `import "storage-go"`，未引入 driver 包 | `storage.New` 错误信息明确提示「did you forget blank import?」 |
 
 ## 参考项目
 
