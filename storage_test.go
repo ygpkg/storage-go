@@ -12,50 +12,50 @@ import (
 	"github.com/yangguang/storage-go/types"
 )
 
-type stubStorage struct{}
+type minimalStorage struct{}
 
-func (s *stubStorage) Close() error { return nil }
-func (s *stubStorage) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...types.PutOption) (*types.ObjectMeta, error) {
+func (s *minimalStorage) Close() error { return nil }
+func (s *minimalStorage) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...types.PutOption) (*types.ObjectMeta, error) {
 	return &types.ObjectMeta{Size: size}, nil
 }
-func (s *stubStorage) GetObject(ctx context.Context, bucket, key string, opts ...types.GetOption) (*types.Object, error) {
+func (s *minimalStorage) GetObject(ctx context.Context, bucket, key string, opts ...types.GetOption) (*types.Object, error) {
 	return nil, nil
 }
-func (s *stubStorage) HeadObject(ctx context.Context, bucket, key string) (*types.ObjectMeta, error) {
+func (s *minimalStorage) HeadObject(ctx context.Context, bucket, key string) (*types.ObjectMeta, error) {
 	return nil, nil
 }
-func (s *stubStorage) DeleteObject(ctx context.Context, bucket, key string) error { return nil }
-func (s *stubStorage) DeleteObjects(ctx context.Context, bucket string, keys []string) error {
+func (s *minimalStorage) DeleteObject(ctx context.Context, bucket, key string) error { return nil }
+func (s *minimalStorage) DeleteObjects(ctx context.Context, bucket string, keys []string) error {
 	return nil
 }
-func (s *stubStorage) CopyObject(ctx context.Context, src, dst types.StoragePath, opts ...types.CopyOption) (*types.ObjectMeta, error) {
+func (s *minimalStorage) CopyObject(ctx context.Context, src, dst types.StoragePath, opts ...types.CopyOption) (*types.ObjectMeta, error) {
 	return nil, nil
 }
-func (s *stubStorage) ListObjects(ctx context.Context, bucket, prefix string, opts ...types.ListOption) (*types.ListResult, error) {
+func (s *minimalStorage) ListObjects(ctx context.Context, bucket, prefix string, opts ...types.ListOption) (*types.ListResult, error) {
 	return nil, nil
 }
-func (s *stubStorage) ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...types.ListOption) (types.Pager[types.ObjectMeta], error) {
+func (s *minimalStorage) ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...types.ListOption) (types.Pager[types.ObjectMeta], error) {
 	return nil, nil
 }
-func (s *stubStorage) GetPublicURL(ctx context.Context, path types.StoragePath) (string, error) {
+func (s *minimalStorage) GetPublicURL(ctx context.Context, path types.StoragePath) (string, error) {
 	return "", nil
 }
-func (s *stubStorage) PresignGet(ctx context.Context, bucket, key string, expire time.Duration) (string, error) {
+func (s *minimalStorage) PresignGet(ctx context.Context, bucket, key string, expire time.Duration) (string, error) {
 	return "", nil
 }
-func (s *stubStorage) PresignPut(ctx context.Context, bucket, key string, expire time.Duration) (string, error) {
+func (s *minimalStorage) PresignPut(ctx context.Context, bucket, key string, expire time.Duration) (string, error) {
 	return "", nil
 }
-func (s *stubStorage) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...types.PutOption) (types.UploadID, error) {
+func (s *minimalStorage) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...types.PutOption) (types.UploadID, error) {
 	return "upload-1", nil
 }
-func (s *stubStorage) UploadPart(ctx context.Context, bucket, key string, id types.UploadID, partNum int, r io.Reader, size int64) (*types.PartInfo, error) {
+func (s *minimalStorage) UploadPart(ctx context.Context, bucket, key string, id types.UploadID, partNum int, r io.Reader, size int64) (*types.PartInfo, error) {
 	return &types.PartInfo{PartNumber: partNum, Size: size}, nil
 }
-func (s *stubStorage) CompleteMultipartUpload(ctx context.Context, bucket, key string, id types.UploadID, parts []types.PartInfo) (*types.ObjectMeta, error) {
+func (s *minimalStorage) CompleteMultipartUpload(ctx context.Context, bucket, key string, id types.UploadID, parts []types.PartInfo) (*types.ObjectMeta, error) {
 	return &types.ObjectMeta{}, nil
 }
-func (s *stubStorage) AbortMultipartUpload(ctx context.Context, bucket, key string, id types.UploadID) error {
+func (s *minimalStorage) AbortMultipartUpload(ctx context.Context, bucket, key string, id types.UploadID) error {
 	return nil
 }
 
@@ -87,7 +87,7 @@ func TestNewDriverEmpty(t *testing.T) {
 
 func TestNewDriverRegistered(t *testing.T) {
 	registry.Register("stub-test", func(cfg Config) (types.Storage, error) {
-		return &stubStorage{}, nil
+		return &minimalStorage{}, nil
 	})
 
 	s, err := New(Config{Driver: "stub-test"})
