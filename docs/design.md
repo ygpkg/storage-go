@@ -112,6 +112,9 @@ type Config struct {
     // 本地存储
     BaseDir   string     // DriverLocal 时必填，本地根目录
 
+    // 公开访问域名（GetPublicURL 使用）
+    PublicDomain string   // 全局单一公开域名，如 "https://cdn.example.com"；为空时 GetPublicURL 走 driver 默认行为
+
     // 高级配置
     Timeout      time.Duration
     MaxRetry     int
@@ -284,6 +287,19 @@ case storage.SchemeFile:
 }
 ```
 
+> **推荐用法：调用 GetPublicURL**
+>
+> 上述 switch 拼接 URL 方式将域名硬编码在调用方，且域名变更时需修改业务代码。推荐改为调用 `s.GetPublicURL(ctx, meta.Path)`，由各 driver 基于 `Config.PublicDomain` 拼接 URL，调用方无需感知底层 driver 与域名。
+>
+> ```go
+> // 上传后只存储 StoragePath 到数据库
+> db.Save(meta.Path.String()) // "s3://media-prod/avatar/user123.webp"
+>
+> // 真正需要访问时再转换 URL（可在 API 层集中处理）
+> publicURL, err := s.GetPublicURL(ctx, meta.Path)
+> // → "https://cdn.example.com/media-prod/avatar/user123.webp"
+> ```
+
 ---
 
 ## 5. 核心接口（Storage）
@@ -305,6 +321,12 @@ type Storage interface {
     // 预签名（不支持则返回 ErrNotSupported）
     PresignGet(ctx context.Context, bucket, key string, expire time.Duration) (string, error)
     PresignPut(ctx context.Context, bucket, key string, expire time.Duration) (string, error)
+
+    // 公开 URL 转换：将 StoragePath 转换为外部可访问的公开 URL
+    //   - SchemeS3: 基于 Config.PublicDomain 拼接，如 "https://cdn.example.com/bucket/key"
+    //   - SchemeFile: 忽略 PublicDomain，直接返回 LocalPath()
+    // PublicDomain 为空时：SchemeS3 返回 ErrInvalidConfig，SchemeFile 仍返回 LocalPath()
+    GetPublicURL(ctx context.Context, path StoragePath) (string, error)
 
     // 分片上传
     MultipartUploader
@@ -403,12 +425,12 @@ if errors.Is(err, storage.ErrNotFound) {
 
 ## 9. 各 Driver 实现策略
 
-| Driver | 实现策略 | SDK/依赖 | Scheme | Presign |
-|---|---|---|---|---|
-| `minio` | minio-go SDK，独立实现 | `github.com/minio/minio-go/v7` | SchemeS3 | 支持 |
-| `cos` | cos-go-sdk-v5，复用 driver/internal 错误码映射 | `github.com/tencentyun/cos-go-sdk-v5` | SchemeS3 | 支持 |
-| `weedfs` | SeaweedFS HTTP API 直接调用 | 仅 `net/http` | SchemeS3 | ErrNotSupported |
-| `local` | os 标准库 | 无外部依赖 | SchemeFile | ErrNotSupported |
+| Driver | 实现策略 | SDK/依赖 | Scheme | Presign | GetPublicURL |
+|---|---|---|---|---|---|
+| `minio` | minio-go SDK，独立实现 | `github.com/minio/minio-go/v7` | SchemeS3 | 支持 | `PublicDomain + "/" + bucket + "/" + key` |
+| `cos` | cos-go-sdk-v5，复用 driver/internal 错误码映射 | `github.com/tencentyun/cos-go-sdk-v5` | SchemeS3 | 支持 | `PublicDomain + "/" + bucket + "/" + key` |
+| `weedfs` | SeaweedFS HTTP API 直接调用 | 仅 `net/http` | SchemeS3 | ErrNotSupported | `PublicDomain + "/" + bucket + "/" + key` |
+| `local` | os 标准库 | 无外部依赖 | SchemeFile | ErrNotSupported | 直接返回 `path.LocalPath()`，忽略 PublicDomain |
 
 > **driver/internal 说明：** 轻量化，仅包含错误码映射（将各 SDK 错误码统一映射到 sentinel error）和公共类型/工具（如路径校验辅助函数）。签名计算、XML 解析等由各 SDK 自行封装。
 
@@ -465,6 +487,7 @@ func TestDriverLocal(t *testing.T) {
 | Config 扩展 | `ExtraOptions map[string]string` | 承接 driver 特有参数，不污染通用 Config 字段 |
 | 错误处理 | sentinel error + `errors.Is` | 屏蔽底层差异，符合 Go 惯例 |
 | 分页 | `Pager[T]` 泛型流式接口 | 避免一次性加载大量对象，适合大桶生产场景 |
+| 公开 URL 转换 | Storage 接口新增 `GetPublicURL(ctx, path) (string, error)`，由 driver 基于 `Config.PublicDomain` 拼接 | 调用方存储时只保存 `StoragePath`，访问时由 SDK 转换 URL，底层域名变更只改 Config 不改调用方 |
 
 ## 参考项目
 - /Users/morehao/Documents/study/go/pkgs/aws-sdk-go-v2/service/s3
@@ -472,3 +495,4 @@ func TestDriverLocal(t *testing.T) {
 - /Users/morehao/Documents/study/go/pkgs/gofakes3
 - /Users/morehao/Documents/practice/go/golib/storage
 - /Users/morehao/Documents/study/go/pkgs/beyond-go-storage
+- /Users/morehao/Documents/study/go/go-ai/WeKnora/internal/application/service/file/local.go
