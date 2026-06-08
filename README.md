@@ -14,7 +14,7 @@
 ## 安装
 
 ```bash
-go get github.com/insmtx/storage-go
+go get github.com/ygpkg/storage-go
 ```
 
 ## 快速开始
@@ -26,7 +26,7 @@ package main
 
 import (
     "context"
-    "github.com/insmtx/storage-go"
+    "github.com/ygpkg/storage-go"
 )
 
 func main() {
@@ -54,10 +54,10 @@ func main() {
     s, _ := storage.New("local", storage.Config{
         RootDir:     "/tmp/storage",
         HTTPBaseURL: "http://localhost:8080",
-        Bucket:      "avatars",
     })
-// BaseDir/data/{Bucket}/key       — 对象数据
-// BaseDir/meta/{Bucket}/{sha1(key)}.json — 元数据（sidecar，跨平台兼容）
+// 数据文件:     {RootDir}/data/{bucket}/key
+// 元数据文件:   {RootDir}/meta/{bucket}/{sha1(key)}.json
+// 分片上传目录: {RootDir}/.multipart/{uploadID}/
 ```
 
 ## 核心概念
