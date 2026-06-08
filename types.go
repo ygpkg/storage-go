@@ -1,9 +1,22 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"time"
+)
+
+var (
+	ErrNotFound         = errors.New("storage: object not found")
+	ErrAlreadyExists    = errors.New("storage: object already exists")
+	ErrNotSupported     = errors.New("storage: operation not supported")
+	ErrInvalidPath      = errors.New("storage: invalid storage path")
+	ErrInvalidConfig    = errors.New("storage: invalid config")
+	ErrPermission       = errors.New("storage: permission denied")
+	ErrQuotaExceeded    = errors.New("storage: quota exceeded")
+	ErrCrossBackend     = errors.New("storage: cross-backend copy is not supported")
+	ErrMultipartAborted = errors.New("storage: multipart upload was aborted")
 )
 
 // PutObjectResult 单次上传结果。
@@ -32,11 +45,11 @@ type ObjectInfo struct {
 }
 
 // ListObjectsOutput ListObjects 单次调用结果。
-// 分页用 NextContinuationToken 配合 NewListObjectsPaginator 迭代。
+// 分页通过 NextContinuationToken 配合 ListOption 中的 MaxKeys 和 StartAfter 实现。
 type ListObjectsOutput struct {
-	Contents             []ObjectInfo
-	CommonPrefixes       []string
-	IsTruncated          bool
+	Contents              []ObjectInfo
+	CommonPrefixes        []string
+	IsTruncated           bool
 	NextContinuationToken string
 }
 

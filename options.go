@@ -74,33 +74,3 @@ func WithStartAfter(k string) ListOption {
 func WithRecursive(r bool) ListOption {
 	return func(o *ListOptions) { o.Recursive = r }
 }
-
-// UploadOption 控制 Client.UploadObject 高层分片上传行为。
-type UploadOption func(*UploadOptions)
-
-type UploadOptions struct {
-	ObjectSize  int64
-	ChunkSize   int64
-	Concurrency int
-	PutOptions  []PutOption
-}
-
-// WithObjectSize 显式指定对象大小（未知大小时用于分片计算）。
-func WithObjectSize(size int64) UploadOption {
-	return func(o *UploadOptions) { o.ObjectSize = size }
-}
-
-// WithChunkSize 设置分片大小，默认 32MB。
-func WithChunkSize(size int64) UploadOption {
-	return func(o *UploadOptions) { o.ChunkSize = size }
-}
-
-// WithConcurrency 设置分片上传并发度，默认 5。
-func WithConcurrency(n int) UploadOption {
-	return func(o *UploadOptions) { o.Concurrency = n }
-}
-
-// WithPutOptions 把 PutOption 透传到每个分片。
-func WithPutOptions(opts ...PutOption) UploadOption {
-	return func(o *UploadOptions) { o.PutOptions = opts }
-}

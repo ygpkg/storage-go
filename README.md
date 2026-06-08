@@ -30,17 +30,17 @@ import (
 )
 
 func main() {
-    client, _ := storage.NewClient(storage.Config{
+    s, _ := storage.New(storage.Config{
         Driver:    storage.DriverMinio,
         Endpoint:  "play.min.io",
         AccessKey: "minioadmin",
         SecretKey: "minioadmin",
-        Bucket:    "my-bucket",
         UseSSL:    true,
+        Bucket:    "my-bucket",
     })
 
     ctx := context.Background()
-    result, _ := client.PutObject(ctx, "hello.txt",
+    result, _ := s.PutObject(ctx, "hello.txt",
         strings.NewReader("Hello, Storage!"),
         storage.WithContentType("text/plain"),
     )
@@ -52,12 +52,12 @@ func main() {
 ### 本地磁盘
 
 ```go
-client, _ := storage.NewClient(storage.Config{
-    Driver:       storage.DriverLocal,
-    RootDir:      "/tmp/storage",
-    HTTPBaseURL:  "http://localhost:8080",
-    Bucket:       "avatars",
-})
+    s, _ := storage.New(storage.Config{
+        Driver:      storage.DriverLocal,
+        RootDir:     "/tmp/storage",
+        HTTPBaseURL: "http://localhost:8080",
+        Bucket:      "avatars",
+    })
 // BaseDir/data/{Bucket}/key       — 对象数据
 // BaseDir/meta/{Bucket}/{sha1(key)}.json — 元数据（sidecar，跨平台兼容）
 ```
@@ -82,40 +82,25 @@ client, _ := storage.NewClient(storage.Config{
 
 ```go
 // 从 MinIO 切换到 COS，只改配置
-client, _ := storage.NewClient(storage.Config{
-    Driver:    storage.DriverCOS,
-    Endpoint:  "https://bucket-1250000000.cos.ap-shanghai.myqcloud.com",
-    AccessKey: "xxx",
-    SecretKey: "yyy",
-    Bucket:    "my-bucket",
-})
+    s, _ := storage.New(storage.Config{
+        Driver:    storage.DriverCOS,
+        Endpoint:  "https://bucket-1250000000.cos.ap-shanghai.myqcloud.com",
+        AccessKey: "xxx",
+        SecretKey: "yyy",
+        Bucket:    "my-bucket",
+    })
 ```
 
 ## 分页列举
 
 ```go
-pager, _ := storage.NewListObjectsPaginator(client, ctx, "my-bucket", "prefix/",
+out, _ := s.ListObjects(ctx, "my-bucket", "prefix/",
     storage.WithMaxKeys(100),
     storage.WithRecursive(true),
 )
-for pager.HasMore() {
-    page, _ := pager.NextPage(ctx)
-    for _, obj := range page.Contents {
-        fmt.Println(obj.Path.Key())
-    }
+for _, obj := range out.Contents {
+    fmt.Println(obj.Path.Key())
 }
-```
-
-## 大文件分片上传
-
-```go
-// Client.UploadObject 自动处理切分和并发上传
-// 小于 128MB 自动降级为 PutObject，大于走分片
-result, err := client.UploadObject(ctx, "large-file.bin", file, size,
-    storage.WithConcurrency(8),
-    storage.WithChunkSize(64<<20),
-    storage.WithPutOptions(storage.WithContentType("application/octet-stream")),
-)
 ```
 
 ## 错误处理

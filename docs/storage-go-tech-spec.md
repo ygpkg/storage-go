@@ -34,10 +34,10 @@ storage-go/
 ├── interface.go         # 接口定义：Base / Multipart / Ext，由三者组合成 Storage
 ├── path.go              # StoragePath interface 及 s3Path / localPath 实现 + NewS3Path / NewLocalPath 工厂
 ├── errors.go            # sentinel error
-├── options.go           # PutOption / GetOption / ListOption / UploadOption
+├── options.go           # PutOption / GetOption / ListOption
 ├── types.go             # ObjectInfo / PutObjectResult / GetObjectResult / ListObjectsOutput 等
 ├── registry.go          # driver 注册表，Register() / open()
-├── client.go            # Client 结构体与高层封装（含 UploadObject / ListPager）
+├── client.go            # 已移除
 ├── config.go            # Config 定义与 New() 工厂
 
 ├── driver/
@@ -126,7 +126,7 @@ type StoragePath interface {
 | GetObject | Base | GetObject | 下载，支持 Range |
 | DeleteObject | Base | DeleteObject | 单对象删除，幂等 |
 | DeleteObjects | Base | DeleteObjects | 批量删除，最多 1000 个 |
-| ListObjects | Base | ListObjectsV2 | 前缀列举，返回 *ListObjectsOutput，配套 ListPager 分页 |
+| ListObjects | Base | ListObjectsV2 | 前缀列举，返回 *ListObjectsOutput |
 | HeadObject | Ext | HeadObject | 获取元数据，不下载内容 |
 | CopyObject | Ext | CopyObject | 服务端复制 |
 | CreateMultipartUpload | Multipart | CreateMultipartUpload | 初始化分片上传 |
@@ -236,7 +236,7 @@ type DeleteFailure struct {
 }
 ```
 
-ListObjects 采用对齐 AWS SDK 的分页模型，不在接口内暴露 channel 流式。分页通过 `NewListObjectsPaginator(s Base, ...) (ListPager, error)` 迭代器提供，`ListPager` 接口包含 `HasMore() bool` 和 `NextPage(ctx) (*ListObjectsOutput, error)`。
+ListObjects 采用对齐 AWS SDK 的分页模型，不在接口内暴露 channel 流式。分页通过 `MaxKeys` 和 `StartAfter` 选项控制。
 
 ## 六、错误处理
 
@@ -288,18 +288,7 @@ WithMaxKeys(n int64) ListOption
 WithStartAfter(k string) ListOption
 ```
 
-### UploadOption（高层封装 UploadObject 使用）
-
-```go
-WithObjectSize(size int64) UploadOption
-WithChunkSize(size int64) UploadOption       // 默认 32 MB
-WithConcurrency(n int) UploadOption          // 默认 5
-WithPutOptions(opts ...PutOption) UploadOption
-
-// MultipartThreshold 默认 128 MB，小于此值走 PutObject
-```
-
-## 八、Config、New 工厂与 Client
+## 八、Config、New 工厂
 
 ### Config
 
@@ -327,21 +316,7 @@ type Config struct {
 
 > 字段名变更：`Backend` → `Driver`。`Backend` 偏“后端位置/基础设施”语义，但本字段实际表达的是“选用哪个 driver 实现”，`Driver` 更准确。常量名同步由 `BackendMinIO/BackendCOS/BackendSeaweedFS/BackendLocal` 调整为 `DriverMinio/DriverCOS/DriverSeaweedFS/DriverLocal`。
 
-### Client
-
-NewClient(cfg) 等价 New(cfg) + 注入 cfg.Bucket。调用方通过 Client 只需提供 key，无需每次传入 bucket：
-
-```go
-client, _ := storage.NewClient(storage.Config{
-    Driver:   storage.DriverMinio,
-    Endpoint: "https://s3.ap-northeast-1.amazonaws.com",
-    Bucket:   "avatars",
-})
-
-result, _ := client.PutObject(ctx, "user-123.png", file)
-fmt.Println(result.Path.URI())         // s3://avatars/user-123.png
-fmt.Println(result.Path.PublicURL())  // https://s3.ap-northeast-1.amazonaws.com/avatars/user-123.png
-```
+> Bucket 通过 Config.Bucket 传入，调用方直接使用 Storage 接口，每次调用需要传入 bucket 和 key。
 
 ## 九、driver 实现规范
 
@@ -385,14 +360,12 @@ func wrapErr(err error) error {
 | 最大分片数 | 10,000 |
 | 最大对象大小 | 5 TB |
 
-### 10.2 Client.UploadObject 高层封装
+### 10.2 分片上传流程
 
-Base / Multipart 子接口保持原子性（每个方法对应一次独立的存储请求），`Client.UploadObject` 自动处理切分、并发上传、排序和失败 Abort：
-
-- 对象大小低于 `MultipartThreshold`（默认 128 MB）时，自动降级为 `PutObject`
-- 并发度由 `WithConcurrency` 控制，默认 5 个 goroutine 同时上传
-- 任何分片失败后，自动触发 `AbortMultipartUpload`，防止已上传分片持续计费
-- parts 按 `PartNumber` 升序排列后再调用 `CompleteMultipartUpload`
+Base / Multipart 子接口保持原子性（每个方法对应一次独立的存储请求），调用方通过组合接口方法实现分片上传：
+- 调用 `CreateMultipartUpload` 初始化上传
+- 并发调用 `UploadPart` 上传各分片
+- 调用 `CompleteMultipartUpload` 合并分片，或调用 `AbortMultipartUpload` 取消上传
 
 ## 十一、PresignGetObject 与 PresignPutObject 的区别
 
@@ -484,8 +457,6 @@ testkit 只 import 根包，不 import 任何具体 driver。`RunDriverSuite` �
 | COS driver | github.com/tencentyun/cos-go-sdk-v5 | 官方 SDK，S3 兼容接口 |
 | SeaweedFS driver | github.com/minio/minio-go/v7 | 独立 driver，通过 s3base 共享 minio-go SDK，不做嵌入 |
 | Local driver | 标准库 os / io | 无额外依赖，分片用临时文件模拟 |
-| 并发分片 | golang.org/x/sync/errgroup | 错误传播 + ctx 取消 |
-| 重试 | 内联退避（client.go） | 分片上传失败按 200ms→400ms→800ms 退避，不引第三方包 |
 | 测试 | testing + github.com/stretchr/testify | 断言与 suite |
 
 ## 十五、关键风险与应对
@@ -497,7 +468,7 @@ testkit 只 import 根包，不 import 任何具体 driver。`RunDriverSuite` �
 | multipart ETag 差异 | 各后端 multipart ETag 计算方式不同 | 大文件通过 CRC32C 独立校验，不依赖 ETag 比较 |
 | presign 签名版本 | COS 签名算法与标准 S3v4 有细节差异 | COS driver 单独实现 PresignGetObject / PresignPutObject |
 | PublicURL 误用 | 对非公开 bucket 拼接 PublicURL，URL 可构造但 403 | 调用方自行判断 bucket 是否公开 |
-| 分片泄漏 | 失败后未 Abort，已上传分片持续计费 | UploadObject 封装保证任何错误路径都触发 Abort；建议存储侧配置 Lifecycle 规则清理 7 天以上未完成分片 |
+| 分片泄漏 | 失败后未 Abort，已上传分片持续计费 | 调用方应在分片上传失败时主动调用 AbortMultipartUpload；建议存储侧配置 Lifecycle 规则清理 7 天以上未完成分片 |
 | Local Presign | 本地文件无法生成签名 URL | PresignGetObject / PresignPutObject 明确返回 ErrNotSupported，调用方 errors.Is 后降级 |
 | Local 元数据适配性 | xattr 在 FAT32/NFS/overlay 文件系统上不可用 | 采用 sidecar 方案（BaseDir/meta/sha1.json），跨平台零依赖 |
 | StoragePath 比较 | interface 不可直接用 `==` 比较 | 文档明确说明统一使用 `a.URI() == b.URI()` |
@@ -510,5 +481,5 @@ testkit 只 import 根包，不 import 任何具体 driver。`RunDriverSuite` �
 | M1 | 根包类型定义（接口 + StoragePath + errors + options + types）+ MockDriver + 注册机制 | Week 1 |
 | M2 | MinIO driver（含分片 + PresignGetObject / PresignPutObject）+ testkit suite | Week 2 |
 | M3 | COS / SeaweedFS / Local driver | Week 3–4 |
-| M4 | Client.UploadObject 高层封装、Range Get、重试策略 | Week 5 |
+| M4 | Range Get 与文档完善 | Week 5 |
 | M5 | 文档、示例、集成测试 CI | Week 6 |
