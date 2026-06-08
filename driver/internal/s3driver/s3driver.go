@@ -237,6 +237,93 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 	return out, nil
 }
 
+// ---------- Multipart ----------
+
+func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...storage.PutOption) (string, error) {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
+		return "", err
+	}
+	if err := pathcheck.ValidateKey(key); err != nil {
+		return "", err
+	}
+	o := &storage.PutOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	input := &s3.CreateMultipartUploadInput{
+		Bucket:      aws.String(bucket),
+		Key:         aws.String(key),
+		ContentType: strPtr(o.ContentType),
+	}
+	output, err := d.client.CreateMultipartUpload(ctx, input)
+	if err != nil {
+		return "", wrapS3Err(err)
+	}
+	return aws.ToString(output.UploadId), nil
+}
+
+func (d *Driver) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, body io.Reader) (*storage.CompletedPart, error) {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
+		return nil, err
+	}
+	if err := pathcheck.ValidateKey(key); err != nil {
+		return nil, err
+	}
+	input := &s3.UploadPartInput{
+		Bucket:     aws.String(bucket),
+		Key:        aws.String(key),
+		UploadId:   aws.String(uploadID),
+		PartNumber: aws.Int32(int32(partNumber)),
+		Body:       body,
+	}
+	output, err := d.client.UploadPart(ctx, input)
+	if err != nil {
+		return nil, wrapS3Err(err)
+	}
+	return &storage.CompletedPart{
+		PartNumber: partNumber,
+		ETag:       aws.ToString(output.ETag),
+	}, nil
+}
+
+func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []storage.CompletedPart) error {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
+		return err
+	}
+	if err := pathcheck.ValidateKey(key); err != nil {
+		return err
+	}
+	cp := make([]types.CompletedPart, len(parts))
+	for i, p := range parts {
+		cp[i] = types.CompletedPart{
+			PartNumber: aws.Int32(int32(p.PartNumber)),
+			ETag:       aws.String(p.ETag),
+		}
+	}
+	_, err := d.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(bucket),
+		Key:             aws.String(key),
+		UploadId:        aws.String(uploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{Parts: cp},
+	})
+	return wrapS3Err(err)
+}
+
+func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
+		return err
+	}
+	if err := pathcheck.ValidateKey(key); err != nil {
+		return err
+	}
+	_, err := d.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(key),
+		UploadId: aws.String(uploadID),
+	})
+	return wrapS3Err(err)
+}
+
 func strPtr(s string) *string {
 	if s == "" {
 		return nil
