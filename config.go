@@ -44,7 +44,7 @@ func New(name string, cfg Config) (Storage, error) {
 	f, ok := LookupDriver(name)
 	if !ok {
 		return nil, wrapInvalidConfig(
-			"driver %q not registered; please blank import _ \"github.com/insmtx/storage-go/driver/" + name + "\"")
+			"driver %q not registered; please blank import _ \"github.com/ygpkg/storage-go/driver/" + name + "\"")
 	}
 	return f(cfg)
 }

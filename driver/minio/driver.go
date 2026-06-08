@@ -2,8 +2,8 @@
 package minio
 
 import (
-	"github.com/insmtx/storage-go"
-	"github.com/insmtx/storage-go/driver/internal/s3driver"
+	"github.com/ygpkg/storage-go"
+	"github.com/ygpkg/storage-go/driver/internal/s3driver"
 )
 
 const DriverName = "minio"

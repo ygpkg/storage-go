@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/insmtx/storage-go"
-	"github.com/insmtx/storage-go/testkit"
+	"github.com/ygpkg/storage-go"
+	"github.com/ygpkg/storage-go/testkit"
 )
 
 func TestCosIntegration(t *testing.T) {

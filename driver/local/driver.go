@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/insmtx/storage-go"
-	"github.com/insmtx/storage-go/driver/internal/pathcheck"
+	"github.com/ygpkg/storage-go"
+	"github.com/ygpkg/storage-go/driver/internal/pathcheck"
 )
 
 const DriverName = "local"

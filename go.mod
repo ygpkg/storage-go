@@ -1,4 +1,4 @@
-module github.com/insmtx/storage-go
+module github.com/ygpkg/storage-go
 
 go 1.24
 

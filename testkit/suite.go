@@ -8,7 +8,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/insmtx/storage-go"
+	"github.com/ygpkg/storage-go"
 )
 
 // RunSuite 对一个 storage 实例跑通用一致性测试。

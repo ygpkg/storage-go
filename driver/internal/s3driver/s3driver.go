@@ -16,8 +16,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
-	"github.com/insmtx/storage-go"
-	"github.com/insmtx/storage-go/driver/internal/pathcheck"
+	"github.com/ygpkg/storage-go"
+	"github.com/ygpkg/storage-go/driver/internal/pathcheck"
 )
 
 type Driver struct {

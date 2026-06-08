@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/insmtx/storage-go"
+	"github.com/ygpkg/storage-go"
 )
 
 // NewMock 返回内存 mock Storage 实现，无外部依赖。
