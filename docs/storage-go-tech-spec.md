@@ -31,7 +31,7 @@ storage-go 是一个统一的对象存储抽象库，对外暴露一套与 S3 �
 
 ```
 storage-go/
-├── interface.go         # StorageDriver 接口定义
+├── interface.go         # 接口定义：Core / Multipart / Ext，由三者组合成 Storage
 ├── path.go              # StoragePath interface 及 s3Path / localPath 实现
 ├── errors.go            # sentinel error
 ├── options.go           # PutOption / GetOption / ListOption / UploadOption
@@ -72,13 +72,13 @@ storage-go/
 func Register(name string, factory DriverFactory) { ... }
 
 // driver/minio/driver.go
-func init() { storage.Register("minio", func(cfg storage.Config) (storage.StorageDriver, error) { ... }) }
+func init() { storage.Register("minio", func(cfg storage.Config) (storage.Storage, error) { ... }) }
 
 // 调用方
 import storage "github.com/yourorg/storage-go"
 import _ "github.com/yourorg/storage-go/driver/minio"
 
-client, err := storage.New(storage.Config{Backend: storage.BackendMinIO, ...})
+client, err := storage.New(storage.Config{Driver: storage.DriverMinio, ...})
 ```
 
 ## 三、StoragePath 设计
@@ -96,9 +96,10 @@ type StoragePath interface {
     IsLocal() bool
     Bucket() string               // local 返回空字符串
     Key() string                  // 裸 key 或文件绝对路径
-    Join(elem ...string) StoragePath
 }
 ```
+
+说明：原 `Join(elem ...string) StoragePath` 已移除。路径拼接由调用方在 `bucket` 与 `key` 层面完成，driver 只负责将已组装好的 bucket/key 构造为 `StoragePath` 并返回。
 
 ### 3.2 路径视图汇总
 
@@ -118,49 +119,74 @@ type StoragePath interface {
 
 ### 4.1 方法命名与 S3 API 对照
 
-| 接口方法 | 对标 S3 API | 说明 |
-| --- | --- | --- |
-| PutObject | PutObject | 单次上传，≤5 GB |
-| GetObject | GetObject | 下载，支持 Range |
-| DeleteObject | DeleteObject | 单对象删除，幂等 |
-| DeleteObjects | DeleteObjects | 批量删除，最多 1000 个 |
-| HeadObject | HeadObject | 获取元数据，不下载内容 |
-| ListObjects | ListObjectsV2 | 前缀列举，流式 channel 返回 |
-| CopyObject | CopyObject | 服务端复制 |
-| CreateMultipartUpload | CreateMultipartUpload | 初始化分片上传 |
-| UploadPart | UploadPart | 上传单个分片 |
-| CompleteMultipartUpload | CompleteMultipartUpload | 合并分片完成上传 |
-| AbortMultipartUpload | AbortMultipartUpload | 取消分片上传 |
-| GetPresignedURL | GetObject（presign） | 有时效的预签名下载 URL |
-| GetPublicURL | 无直接对应 | 永久公开访问 URL |
+| 接口方法 | 所属子接口 | 对标 S3 API | 说明 |
+| --- | --- | --- | --- |
+| PutObject | Core | PutObject | 单次上传，≤5 GB |
+| GetObject | Core | GetObject | 下载，支持 Range |
+| DeleteObject | Core | DeleteObject | 单对象删除，幂等 |
+| DeleteObjects | Core | DeleteObjects | 批量删除，最多 1000 个 |
+| ListObjects | Core | ListObjectsV2 | 前缀列举，流式 channel 返回 |
+| HeadObject | Ext | HeadObject | 获取元数据，不下载内容 |
+| CopyObject | Ext | CopyObject | 服务端复制 |
+| CreateMultipartUpload | Multipart | CreateMultipartUpload | 初始化分片上传 |
+| UploadPart | Multipart | UploadPart | 上传单个分片 |
+| CompleteMultipartUpload | Multipart | CompleteMultipartUpload | 合并分片完成上传 |
+| AbortMultipartUpload | Multipart | AbortMultipartUpload | 取消分片上传 |
+| GetPresignedURL | Ext | GetObject（presign） | 有时效的预签名下载 URL |
+| GetPublicURL | Ext | 无直接对应 | 永久公开访问 URL |
+| Close | Ext | — | 生命周期，收尾资源 |
 
-### 4.2 接口定义（StorageDriver）
+### 4.2 接口拆分与组合（Storage）
+
+按调用频度与场景差异，把所有方法拆到三个子接口，再由它们组合形成统一的 `Storage` 入口：
+
+- **Core** — 常用操作，覆盖 90% 的 CRUD/列举场景
+- **Multipart** — 分片上传，独立成簇，便于按需 mock 与替换
+- **Ext** — 不常用或场景特殊（Head/Copy/URL/Close），可独立实现或返回 `ErrNotSupported`
 
 ```go
-type StorageDriver interface {
-    // 基础操作
+// 常用操作
+type Core interface {
     PutObject(ctx, bucket, key string, body io.Reader, opts ...PutOption) (*PutObjectResult, error)
     GetObject(ctx, bucket, key string, opts ...GetOption) (*GetObjectResult, error)
     DeleteObject(ctx, bucket, key string) error
     DeleteObjects(ctx, bucket string, keys []string) error
-    HeadObject(ctx, bucket, key string) (*ObjectInfo, error)
     ListObjects(ctx, bucket, prefix string, opts ...ListOption) (<-chan ListEntry, error)
-    CopyObject(ctx, srcBucket, srcKey, dstBucket, dstKey string) error
+}
 
-    // 分片上传
+// 分片上传
+type Multipart interface {
     CreateMultipartUpload(ctx, bucket, key string, opts ...PutOption) (uploadID string, err error)
     UploadPart(ctx, bucket, key, uploadID string, partNumber int, body io.Reader) (CompletedPart, error)
     CompleteMultipartUpload(ctx, bucket, key, uploadID string, parts []CompletedPart) error
     AbortMultipartUpload(ctx, bucket, key, uploadID string) error
+}
 
-    // URL
+// 不常用或场景特殊的操作
+type Ext interface {
+    HeadObject(ctx, bucket, key string) (*ObjectInfo, error)
+    CopyObject(ctx, srcBucket, srcKey, dstBucket, dstKey string) error
     GetPresignedURL(ctx, bucket, key string, ttl time.Duration) (string, error)
     GetPublicURL(ctx, bucket, key string) (string, error)
-
-    // 生命周期
     Close() error
 }
+
+// 组合后的总入口
+type Storage interface {
+    Core
+    Multipart
+    Ext
+}
 ```
+
+拆分的好处：
+
+| 好处 | 说明 |
+| --- | --- |
+| 按需组合 | 测试时可只 mock 关心的子接口；轻量场景（如纯图片分发）可只实现 Core |
+| 关注点分离 | 分片逻辑与基础 CRUD 解耦，未来替换分片实现不影响 CRUD 路径 |
+| 不常用操作降级 | driver 对 Ext 中不支持的方法（如 Local 的 GetPresignedURL）可统一返回 `ErrNotSupported`，调用方按子接口判断 |
+| 演进更稳 | 任何子接口新增方法只影响该子接口的实现者，不会扩散到所有 driver |
 
 ## 五、公共数据结构
 
@@ -275,7 +301,7 @@ WithPutOptions(opts ...PutOption) UploadOption
 
 ```go
 type Config struct {
-    Backend Backend // "minio" | "cos" | "seaweedfs" | "local"
+    Driver Driver // "minio" | "cos" | "seaweedfs" | "local"
 
     // S3 兼容后端通用字段
     Endpoint        string
@@ -293,13 +319,15 @@ type Config struct {
 }
 ```
 
+> 字段名变更：`Backend` → `Driver`。`Backend` 偏“后端位置/基础设施”语义，但本字段实际表达的是“选用哪个 driver 实现”，`Driver` 更准确。常量名同步由 `BackendMinIO/BackendCOS/BackendSeaweedFS/BackendLocal` 调整为 `DriverMinio/DriverCOS/DriverSeaweedFS/DriverLocal`。
+
 ### Client
 
 Client 将 Config.Bucket 注入，调用方只需提供 key，无需每次传入 bucket：
 
 ```go
 client, _ := storage.New(storage.Config{
-    Backend:  storage.BackendMinIO,
+    Driver:   storage.DriverMinio,
     Endpoint: "https://s3.ap-northeast-1.amazonaws.com",
     Bucket:   "avatars",
 })
@@ -353,7 +381,7 @@ func wrapErr(err error) error {
 
 ### 10.2 Client.UploadObject 高层封装
 
-StorageDriver 接口保持原子性，`Client.UploadObject` 自动处理切分、并发上传、排序和失败 Abort：
+Core / Multipart 子接口保持原子性（每个方法对应一次独立的存储请求），`Client.UploadObject` 自动处理切分、并发上传、排序和失败 Abort：
 
 - 对象大小低于 `MultipartThreshold`（默认 128 MB）时，自动降级为 `PutObject`
 - 并发度由 `WithConcurrency` 控制，默认 5 个 goroutine 同时上传
@@ -391,14 +419,14 @@ Path.PublicURL(): http://localhost:8080/data/storage/avatars/user/123.png
 
 ### 12.2 基础操作实现
 
-| 接口方法 | 文件系统操作 | 注意事项 |
-| --- | --- | --- |
-| PutObject | os.MkdirAll + 写临时文件后 os.Rename | Rename 保证原子性，避免写到一半被读 |
-| GetObject | os.Open + os.Stat | 不存在时将 os.ErrNotExist 包装为 ErrNotFound |
-| DeleteObject | os.Remove | 文件不存在时静默返回 nil（幂等） |
-| DeleteObjects | 循环调用 os.Remove | 收集失败项，返回 *BulkDeleteError |
-| HeadObject | os.Stat | 用 FileInfo 填充 ObjectInfo，Path 由 makePath 构造 |
-| CopyObject | io.Copy + 原子写 | src、dst 均在同一 rootDir 内，天然满足同后端约束 |
+| 接口方法 | 所属子接口 | 文件系统操作 | 注意事项 |
+| --- | --- | --- | --- |
+| PutObject | Core | os.MkdirAll + 写临时文件后 os.Rename | Rename 保证原子性，避免写到一半被读 |
+| GetObject | Core | os.Open + os.Stat | 不存在时将 os.ErrNotExist 包装为 ErrNotFound |
+| DeleteObject | Core | os.Remove | 文件不存在时静默返回 nil（幂等） |
+| DeleteObjects | Core | 循环调用 os.Remove | 收集失败项，返回 *BulkDeleteError |
+| HeadObject | Ext | os.Stat | 用 FileInfo 填充 ObjectInfo，Path 由 makePath 构造 |
+| CopyObject | Ext | io.Copy + 原子写 | src、dst 均在同一 rootDir 内，天然满足同后端约束 |
 
 ### 12.3 分片上传模拟
 
@@ -417,7 +445,7 @@ Path.PublicURL(): http://localhost:8080/data/storage/avatars/user/123.png
 
 ## 十三、testkit
 
-testkit 只 import 根包，不 import 任何具体 driver。`RunDriverSuite` 对任意 StorageDriver 实现运行完整行为测试：
+testkit 只 import 根包，不 import 任何具体 driver。`RunDriverSuite` 对任意 `Storage` 实现运行完整行为测试：
 
 - PutObject / GetObject roundtrip 验证路径与内容
 - GetObject not found 验证 ErrNotFound
