@@ -52,12 +52,12 @@ func main() {
 
 ```go
     s, _ := storage.New("local", storage.Config{
-        RootDir:     "/tmp/storage",
+        LocalDir:     "/tmp/storage",
         HTTPBaseURL: "http://localhost:8080",
     })
-// 数据文件:     {RootDir}/data/{bucket}/key
-// 元数据文件:   {RootDir}/meta/{bucket}/{sha1(key)}.json
-// 分片上传目录: {RootDir}/.multipart/{uploadID}/
+// 数据文件:     {LocalDir}/data/{bucket}/key
+// 元数据文件:   {LocalDir}/meta/{bucket}/{sha1(key)}.json
+// 分片上传目录: {LocalDir}/.multipart/{uploadID}/
 ```
 
 ## 核心概念

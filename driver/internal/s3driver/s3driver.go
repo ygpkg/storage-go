@@ -20,11 +20,12 @@ import (
 	"github.com/ygpkg/storage-go/driver/internal/pathcheck"
 )
 
+// Driver 基于 aws-sdk-go-v2/service/s3 的统一 S3 驱动实现。
 type Driver struct {
-	client  *s3.Client
-	presign *s3.PresignClient
-	baseURL string
-	region  string
+	client  *s3.Client        // S3 客户端
+	presign *s3.PresignClient // S3 预签名客户端
+	baseURL string            // 对外访问基础 URL，用于构建 PublicURL
+	region  string            // 区域
 }
 
 var _ storage.Storage = (*Driver)(nil)
@@ -140,6 +141,7 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...stor
 		ContentType:   aws.ToString(output.ContentType),
 		ContentLength: aws.ToInt64(output.ContentLength),
 		ETag:          aws.ToString(output.ETag),
+		LastModified:  aws.ToTime(output.LastModified),
 	}, nil
 }
 
@@ -202,10 +204,11 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 		opt(o)
 	}
 	input := &s3.ListObjectsV2Input{
-		Bucket:     aws.String(bucket),
-		Prefix:     aws.String(prefix),
-		MaxKeys:    aws.Int32(int32(o.MaxKeys)),
-		StartAfter: aws.String(o.StartAfter),
+		Bucket:            aws.String(bucket),
+		Prefix:            aws.String(prefix),
+		MaxKeys:           aws.Int32(int32(o.MaxKeys)),
+		StartAfter:        aws.String(o.StartAfter),
+		ContinuationToken: aws.String(o.ContinuationToken),
 	}
 	if !o.Recursive {
 		input.Delimiter = aws.String("/")
@@ -385,10 +388,18 @@ func (d *Driver) PresignGetObject(ctx context.Context, bucket, key string, ttl t
 	if err := pathcheck.ValidateKey(key); err != nil {
 		return "", err
 	}
-	req, err := d.presign.PresignGetObject(ctx, &s3.GetObjectInput{
+	o := &storage.GetOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	input := &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
-	}, s3.WithPresignExpires(ttl))
+	}
+	if o.ByteRange != nil {
+		input.Range = aws.String(fmt.Sprintf("bytes=%d-%d", o.ByteRange.Start, o.ByteRange.End))
+	}
+	req, err := d.presign.PresignGetObject(ctx, input, s3.WithPresignExpires(ttl))
 	if err != nil {
 		return "", wrapS3Err(err)
 	}
@@ -402,10 +413,18 @@ func (d *Driver) PresignPutObject(ctx context.Context, bucket, key string, ttl t
 	if err := pathcheck.ValidateKey(key); err != nil {
 		return "", err
 	}
-	req, err := d.presign.PresignPutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	}, s3.WithPresignExpires(ttl))
+	o := &storage.PutOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	input := &s3.PutObjectInput{
+		Bucket:      aws.String(bucket),
+		Key:         aws.String(key),
+		ContentType: strPtr(o.ContentType),
+		ContentMD5:  strPtr(o.ContentMD5),
+		Metadata:    o.Metadata,
+	}
+	req, err := d.presign.PresignPutObject(ctx, input, s3.WithPresignExpires(ttl))
 	if err != nil {
 		return "", wrapS3Err(err)
 	}

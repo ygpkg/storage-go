@@ -302,7 +302,7 @@ type Config struct {
     UseSSL       bool
 
     // 本地磁盘后端
-    RootDir     string // bucket 映射为 data/ 下的子目录
+    LocalDir    string // bucket 映射为 data/ 下的子目录
     HTTPBaseURL string // 配置后 StoragePath.PublicURL() 返回 HTTP URL
 
     MaxRetries   int           // 默认 3
@@ -379,12 +379,12 @@ Base / Multipart 子接口保持原子性（每个方法对应一次独立的存
 
 ## 十二、Local Driver 实现思路
 
-Local Driver 将本地文件系统模拟为 S3 兼容后端。bucket 映射为 RootDir/data/ 下的子目录，key 映射为该子目录下的相对文件路径。**元数据采用 sidecar 方案**（独立 JSON 文件），不依赖 xattr，跨平台兼容。
+Local Driver 将本地文件系统模拟为 S3 兼容后端。bucket 映射为 LocalDir/data/ 下的子目录，key 映射为该子目录下的相对文件路径。**元数据采用 sidecar 方案**（独立 JSON 文件），不依赖 xattr，跨平台兼容。
 
 ### 12.1 路径与元数据布局
 
 ```
-RootDir      = /data/storage
+LocalDir     = /data/storage
 HTTPBaseURL  = http://localhost:8080 （可选）
 bucket       = avatars
 key          = user/123.png
@@ -421,7 +421,7 @@ Path.PublicURL(): http://localhost:8080/avatars/user/123.png
 用临时目录按约定结构模拟 S3 分片语义：
 
 ```
-{RootDir}/.multipart/{uploadID}/part-{partNumber:04d}
+{LocalDir}/.multipart/{uploadID}/part-{partNumber:04d}
 ```
 
 | 阶段 | 实现 | 说明 |
