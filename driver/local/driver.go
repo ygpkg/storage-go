@@ -54,8 +54,6 @@ func New(cfg storage.Config) (storage.Storage, error) {
 	}, nil
 }
 
-func (d *Driver) Close() error { return nil }
-
 func (d *Driver) dataPath(bucket, key string) string {
 	return filepath.Join(d.baseDir, "data", bucket, filepath.FromSlash(key))
 }
@@ -510,10 +508,6 @@ func (d *Driver) PresignGetObject(ctx context.Context, bucket, key string, ttl t
 
 func (d *Driver) PresignPutObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...storage.PutOption) (string, error) {
 	return "", storage.ErrNotSupported
-}
-
-func (d *Driver) GetPublicURL(ctx context.Context, bucket, key string) (string, error) {
-	return d.newPath(bucket, key).PublicURL(), nil
 }
 
 // ---------- keyLocks ----------

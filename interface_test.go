@@ -52,10 +52,6 @@ func (f *fakeStorage) PresignGetObject(ctx context.Context, bucket, key string, 
 func (f *fakeStorage) PresignPutObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...PutOption) (string, error) {
 	return "https://example.com/presigned-put", nil
 }
-func (f *fakeStorage) GetPublicURL(ctx context.Context, bucket, key string) (string, error) {
-	return "https://example.com/" + bucket + "/" + key, nil
-}
-func (f *fakeStorage) Close() error { return nil }
 
 func TestStorageInterface(t *testing.T) {
 	var _ Storage = (*fakeStorage)(nil)

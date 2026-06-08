@@ -48,10 +48,6 @@ func (s *testStorage) PresignGetObject(ctx context.Context, bucket, key string, 
 func (s *testStorage) PresignPutObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...storage.PutOption) (string, error) {
 	return "", nil
 }
-func (s *testStorage) GetPublicURL(ctx context.Context, bucket, key string) (string, error) {
-	return "", nil
-}
-func (s *testStorage) Close() error { return nil }
 
 func TestNewUnregisteredDriver(t *testing.T) {
 	_, err := storage.New(storage.Config{Driver: "does-not-exist"})
@@ -75,7 +71,6 @@ func TestNewRegisteredDriver(t *testing.T) {
 	if s == nil {
 		t.Fatal("factory returned nil storage")
 	}
-	defer s.Close()
 }
 
 // errorsIs is a tiny shim to avoid importing "errors" in the test file header.

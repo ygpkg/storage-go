@@ -30,8 +30,6 @@ func (m *mockStorage) newPath(bucket, key string) storage.StoragePath {
 	return storage.NewS3Path(bucket, key, "")
 }
 
-func (m *mockStorage) Close() error { return nil }
-
 // ---------- Base ----------
 
 func (m *mockStorage) PutObject(ctx context.Context, bucket, key string, body io.Reader, opts ...storage.PutOption) (*storage.PutObjectResult, error) {
@@ -179,8 +177,4 @@ func (m *mockStorage) PresignGetObject(ctx context.Context, bucket, key string, 
 
 func (m *mockStorage) PresignPutObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...storage.PutOption) (string, error) {
 	return "", storage.ErrNotSupported
-}
-
-func (m *mockStorage) GetPublicURL(ctx context.Context, bucket, key string) (string, error) {
-	return "https://mock/" + bucket + "/" + key, nil
 }

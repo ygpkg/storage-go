@@ -22,6 +22,5 @@ func TestMinioIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer d.Close()
 	testkit.RunSuite(t, d, "test-bucket")
 }

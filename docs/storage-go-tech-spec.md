@@ -135,8 +135,6 @@ type StoragePath interface {
 | AbortMultipartUpload | Multipart | AbortMultipartUpload | 取消分片上传 |
 | PresignGetObject | Ext | GetObject（presign） | 有时效的预签名下载 URL |
 | PresignPutObject | Ext | PutObject（presign） | 有时效的预签名上传 URL |
-| GetPublicURL | Ext | 无直接对应 | 永久公开访问 URL |
-| Close | Ext | — | 生命周期，收尾资源 |
 
 ### 4.2 接口拆分与组合（Storage）
 
@@ -170,8 +168,6 @@ type Ext interface {
     CopyObject(ctx, srcBucket, srcKey, dstBucket, dstKey string) error
     PresignGetObject(ctx, bucket, key string, ttl time.Duration, opts ...GetOption) (string, error)
     PresignPutObject(ctx, bucket, key string, ttl time.Duration, opts ...PutOption) (string, error)
-    GetPublicURL(ctx, bucket, key string) (string, error)
-    Close() error
 }
 
 // 组合后的总入口
@@ -321,7 +317,7 @@ type Config struct {
 
     // 本地磁盘后端
     RootDir     string // bucket 映射为 data/ 下的子目录
-    HTTPBaseURL string // 配置后 GetPublicURL 返回 HTTP URL
+    HTTPBaseURL string // 配置后 StoragePath.PublicURL() 返回 HTTP URL
 
     MaxRetries   int           // 默认 3
     Timeout      time.Duration
@@ -400,16 +396,16 @@ Base / Multipart 子接口保持原子性（每个方法对应一次独立的存
 
 ## 十一、PresignGetObject 与 PresignPutObject 的区别
 
-|  | PresignGetObject | PresignPutObject | GetPublicURL |
-| --- | --- | --- | --- |
-| 时效 | 有时效（ttl 参数控制） | 有时效（ttl 参数控制） | 永久（取决于 bucket ACL） |
-| 鉴权 | 签名内嵌于 URL | 签名内嵌于 URL | 无（bucket 需公开读） |
-| local 支持 | ❌ ErrNotSupported | ❌ ErrNotSupported | ✅ 绝对路径或 HTTP URL |
-| 适用场景 | 私有文件临时授权下载 | 私有文件临时授权上传（准一次性 URL） | CDN 回源、公开资源分发 |
+|  | PresignGetObject | PresignPutObject |
+| --- | --- | --- |
+| 时效 | 有时效（ttl 参数控制） | 有时效（ttl 参数控制） |
+| 鉴权 | 签名内嵌于 URL | 签名内嵌于 URL |
+| local 支持 | ❌ ErrNotSupported | ❌ ErrNotSupported |
+| 适用场景 | 私有文件临时授权下载 | 私有文件临时授权上传（准一次性 URL） |
 
 `PresignPutObject` 通过短期 TTL 实现"准一次性 URL"。将 URL 的签名有效期设为 30-60s，业务层确保单次调用即足够。严格的一次性约束须由服务端侧策略（如唯一 key + 上传后 rename）配合。
 
-`StoragePath.PublicURL()` 与 `GetPublicURL()` 的区别：前者是路径对象自身携带的静态信息，在构造时已确定；后者向存储后端发起请求，适合需要动态生成或校验权限的场景。
+`PublicURL` 的行为由 `StoragePath` 实现决定：S3 后端拼接 `endpoint/bucket/key`，Local 后端拼接 `HTTPBaseURL` 或回退到本地绝对路径。调用方从 `PutObjectResult`、`GetObjectResult` 等结果中的 `.Path.PublicURL()` 获取即可。
 
 ## 十二、Local Driver 实现思路
 
@@ -500,7 +496,7 @@ testkit 只 import 根包，不 import 任何具体 driver。`RunDriverSuite` �
 | S3 兼容差异 | COS / SeaweedFS 对 ListObjects 的 delimiter 支持不完整 | driver 层做兼容；testkit 覆盖 list 边界 case |
 | multipart ETag 差异 | 各后端 multipart ETag 计算方式不同 | 大文件通过 CRC32C 独立校验，不依赖 ETag 比较 |
 | presign 签名版本 | COS 签名算法与标准 S3v4 有细节差异 | COS driver 单独实现 PresignGetObject / PresignPutObject |
-| PublicURL 误用 | 对非公开 bucket 调用 GetPublicURL，URL 可构造但 403 | 文档注明前提 |
+| PublicURL 误用 | 对非公开 bucket 拼接 PublicURL，URL 可构造但 403 | 调用方自行判断 bucket 是否公开 |
 | 分片泄漏 | 失败后未 Abort，已上传分片持续计费 | UploadObject 封装保证任何错误路径都触发 Abort；建议存储侧配置 Lifecycle 规则清理 7 天以上未完成分片 |
 | Local Presign | 本地文件无法生成签名 URL | PresignGetObject / PresignPutObject 明确返回 ErrNotSupported，调用方 errors.Is 后降级 |
 | Local 元数据适配性 | xattr 在 FAT32/NFS/overlay 文件系统上不可用 | 采用 sidecar 方案（BaseDir/meta/sha1.json），跨平台零依赖 |
@@ -512,7 +508,7 @@ testkit 只 import 根包，不 import 任何具体 driver。`RunDriverSuite` �
 | 阶段 | 交付物 | 目标周期 |
 | --- | --- | --- |
 | M1 | 根包类型定义（接口 + StoragePath + errors + options + types）+ MockDriver + 注册机制 | Week 1 |
-| M2 | MinIO driver（含分片 + GetPublicURL + PresignGetObject / PresignPutObject）+ testkit suite | Week 2 |
+| M2 | MinIO driver（含分片 + PresignGetObject / PresignPutObject）+ testkit suite | Week 2 |
 | M3 | COS / SeaweedFS / Local driver | Week 3–4 |
 | M4 | Client.UploadObject 高层封装、Range Get、重试策略 | Week 5 |
 | M5 | 文档、示例、集成测试 CI | Week 6 |

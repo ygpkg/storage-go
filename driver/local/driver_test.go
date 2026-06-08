@@ -18,7 +18,6 @@ func newTestDriver(t *testing.T) *Driver {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = d.Close() })
 	return d.(*Driver)
 }
 
@@ -28,7 +27,6 @@ func newTestStorage(t *testing.T) storage.Storage {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = d.Close() })
 	return d
 }
 
@@ -54,7 +52,6 @@ func TestDriverRegistersSelf(t *testing.T) {
 	if s == nil {
 		t.Fatal("storage.New returned nil")
 	}
-	_ = s.Close()
 }
 
 func TestDriverPutGet(t *testing.T) {

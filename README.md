@@ -38,7 +38,6 @@ func main() {
         Bucket:    "my-bucket",
         UseSSL:    true,
     })
-    defer client.Close()
 
     ctx := context.Background()
     result, _ := client.PutObject(ctx, "hello.txt",

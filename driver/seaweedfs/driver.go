@@ -52,8 +52,6 @@ func New(cfg storage.Config) (storage.Storage, error) {
 	return &Driver{client: client, core: core, cfg: dCfg}, nil
 }
 
-func (d *Driver) Close() error { return nil }
-
 func (d *Driver) newPath(bucket, key string) storage.StoragePath {
 	return storage.NewS3Path(bucket, key, d.cfg.PublicDomain)
 }
@@ -326,13 +324,6 @@ func (d *Driver) PresignPutObject(ctx context.Context, bucket, key string, ttl t
 		return "", s3base.WrapMinioErr(err)
 	}
 	return u.String(), nil
-}
-
-func (d *Driver) GetPublicURL(ctx context.Context, bucket, key string) (string, error) {
-	if d.cfg.PublicDomain == "" {
-		return "", fmt.Errorf("%w: HTTPBaseURL is required for GetPublicURL", storage.ErrInvalidConfig)
-	}
-	return d.newPath(bucket, key).PublicURL(), nil
 }
 
 var _ = errors.New
