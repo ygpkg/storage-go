@@ -32,19 +32,3 @@ type Config struct {
 	Timeout      time.Duration     // 请求超时时间
 	ExtraOptions map[string]string // 驱动额外选项
 }
-
-// New 根据 name 查注册表并用 cfg 构建 Storage。
-// name 是注册到注册表的驱动名（与 LookupDriver 入参、Register 入参含义一致），
-// DriverMinio/DriverCOS 等常量可用 string(...) 显式转换后传入。
-// 未注册时返回明确错误提示需 blank import 相应 driver 子包。
-func New(name string, cfg Config) (Storage, error) {
-	if name == "" {
-		return nil, wrapInvalidConfig("Driver is required")
-	}
-	f, ok := LookupDriver(name)
-	if !ok {
-		return nil, wrapInvalidConfig(
-			"driver %q not registered; please blank import _ \"github.com/ygpkg/storage-go/driver/" + name + "\"")
-	}
-	return f(cfg)
-}
