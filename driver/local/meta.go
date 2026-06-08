@@ -17,6 +17,8 @@ type metaFile struct {
 	ContentType  string            `json:"content_type"`
 	LastModified time.Time         `json:"last_modified"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
+	DataMtime    time.Time         `json:"data_mtime,omitempty"`
+	DataSize     int64             `json:"data_size,omitempty"`
 }
 
 func metaPath(baseDir, bucket, key string) string {
@@ -47,4 +49,44 @@ func readMeta(baseDir, bucket, key string) (*metaFile, error) {
 		return nil, err
 	}
 	return &m, nil
+}
+
+func syncMeta(baseDir, bucket, key, dataPath, contentType string, metadata map[string]string) (*metaFile, error) {
+	fi, err := os.Stat(dataPath)
+	if err != nil {
+		return nil, err
+	}
+	fileMtime := fi.ModTime()
+	fileSize := fi.Size()
+
+	existing, _ := readMeta(baseDir, bucket, key)
+	if existing != nil && existing.DataMtime.Equal(fileMtime) && existing.DataSize == fileSize {
+		return existing, nil
+	}
+
+	etag, readSize, err := computeETag(dataPath)
+	if err != nil {
+		return nil, err
+	}
+
+	meta := &metaFile{
+		Key:          key,
+		Size:         readSize,
+		ETag:         etag,
+		ContentType:  contentType,
+		LastModified: time.Now().UTC(),
+		Metadata:     metadata,
+		DataMtime:    fileMtime,
+		DataSize:     readSize,
+	}
+	if meta.ContentType == "" {
+		meta.ContentType = "application/octet-stream"
+	}
+	if meta.Metadata == nil {
+		meta.Metadata = map[string]string{}
+	}
+	if err := writeMeta(baseDir, bucket, key, meta); err != nil {
+		return nil, err
+	}
+	return meta, nil
 }

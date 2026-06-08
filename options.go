@@ -8,6 +8,7 @@ type PutOptions struct {
 	ContentMD5   string
 	Metadata     map[string]string
 	StorageClass string
+	IfNotExists  bool
 }
 
 // WithContentType 设置对象的 Content-Type。
@@ -28,6 +29,11 @@ func WithMetadata(m map[string]string) PutOption {
 // WithStorageClass 设置存储类型（STANDARD / IA / ARCHIVE 等）。
 func WithStorageClass(sc string) PutOption {
 	return func(o *PutOptions) { o.StorageClass = sc }
+}
+
+// WithIfNotExists 仅当 key 不存在时才写入，否则返回 ErrAlreadyExists。
+func WithIfNotExists() PutOption {
+	return func(o *PutOptions) { o.IfNotExists = true }
 }
 
 // GetOption 控制下载行为。

@@ -185,3 +185,209 @@ func TestDriverInvalidKey(t *testing.T) {
 		t.Errorf("err = %v, want ErrInvalidPath", err)
 	}
 }
+
+// ---------- 新增测试 ----------
+
+func TestDriverListCommonPrefixes(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+	_, _ = d.PutObject(ctx, "bkt", "root.png", bytes.NewReader([]byte("0")))
+	_, _ = d.PutObject(ctx, "bkt", "dir/a.png", bytes.NewReader([]byte("1")))
+	_, _ = d.PutObject(ctx, "bkt", "dir/b.png", bytes.NewReader([]byte("2")))
+	_, _ = d.PutObject(ctx, "bkt", "other/c.png", bytes.NewReader([]byte("3")))
+
+	out, err := d.ListObjects(ctx, "bkt", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.CommonPrefixes) != 2 {
+		t.Errorf("CommonPrefixes = %v, want 2 entries (dir/ and other/)", out.CommonPrefixes)
+	}
+	if len(out.Contents) != 1 {
+		t.Errorf("Contents = %d, want 1 (root.png)", len(out.Contents))
+	}
+}
+
+func TestDriverListRecursive(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+	_, _ = d.PutObject(ctx, "bkt", "dir/a.png", bytes.NewReader([]byte("1")))
+	_, _ = d.PutObject(ctx, "bkt", "dir/b.png", bytes.NewReader([]byte("2")))
+
+	out, err := d.ListObjects(ctx, "bkt", "", storage.WithRecursive(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.CommonPrefixes) != 0 {
+		t.Errorf("CommonPrefixes = %v, want empty for recursive", out.CommonPrefixes)
+	}
+	if len(out.Contents) != 2 {
+		t.Errorf("Contents = %d, want 2", len(out.Contents))
+	}
+}
+
+func TestDriverListPrefixFilter(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+	_, _ = d.PutObject(ctx, "bkt", "dir/a.png", bytes.NewReader([]byte("1")))
+	_, _ = d.PutObject(ctx, "bkt", "dir/sub/x.png", bytes.NewReader([]byte("2")))
+	_, _ = d.PutObject(ctx, "bkt", "other/b.png", bytes.NewReader([]byte("3")))
+
+	out, err := d.ListObjects(ctx, "bkt", "dir/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.CommonPrefixes) != 1 {
+		t.Errorf("CommonPrefixes = %v, want [dir/sub/]", out.CommonPrefixes)
+	}
+	if len(out.Contents) != 1 {
+		t.Errorf("Contents = %d, want 1 (dir/a.png)", len(out.Contents))
+	}
+}
+
+func TestDriverIfNotExists(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+
+	_, err := d.PutObject(ctx, "bkt", "k1", bytes.NewReader([]byte("first")), storage.WithIfNotExists())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = d.PutObject(ctx, "bkt", "k1", bytes.NewReader([]byte("second")), storage.WithIfNotExists())
+	if !errors.Is(err, storage.ErrAlreadyExists) {
+		t.Errorf("err = %v, want ErrAlreadyExists", err)
+	}
+
+	obj, err := d.GetObject(ctx, "bkt", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer obj.Body.Close()
+	data, _ := io.ReadAll(obj.Body)
+	if string(data) != "first" {
+		t.Errorf("body = %q, want first (not overwritten)", data)
+	}
+}
+
+func TestDriverMultipartComplete(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+
+	uploadID, err := d.CreateMultipartUpload(ctx, "bkt", "bigfile", storage.WithContentType("image/png"), storage.WithMetadata(map[string]string{"author": "test"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = d.UploadPart(ctx, "bkt", "bigfile", uploadID, 1, bytes.NewReader([]byte("part1-")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.UploadPart(ctx, "bkt", "bigfile", uploadID, 2, bytes.NewReader([]byte("part2")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = d.CompleteMultipartUpload(ctx, "bkt", "bigfile", uploadID, []storage.CompletedPart{
+		{PartNumber: 1, ETag: "part-1"},
+		{PartNumber: 2, ETag: "part-2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	obj, err := d.GetObject(ctx, "bkt", "bigfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer obj.Body.Close()
+	data, _ := io.ReadAll(obj.Body)
+	if !bytes.Equal(data, []byte("part1-part2")) {
+		t.Errorf("merged body = %q, want part1-part2", data)
+	}
+	if obj.ContentType != "image/png" {
+		t.Errorf("ContentType = %q, want image/png", obj.ContentType)
+	}
+
+	info, err := d.HeadObject(ctx, "bkt", "bigfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Metadata["author"] != "test" {
+		t.Errorf("Metadata[author] = %q, want test", info.Metadata["author"])
+	}
+}
+
+func TestDriverMultipartAbort(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+
+	uploadID, err := d.CreateMultipartUpload(ctx, "bkt", "bigfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = d.UploadPart(ctx, "bkt", "bigfile", uploadID, 1, bytes.NewReader([]byte("x")))
+
+	if err := d.AbortMultipartUpload(ctx, "bkt", "bigfile", uploadID); err != nil {
+		t.Fatal(err)
+	}
+
+	err = d.CompleteMultipartUpload(ctx, "bkt", "bigfile", uploadID, nil)
+	if err == nil {
+		t.Fatal("expected error on Complete after Abort")
+	}
+}
+
+func TestDriverMetaCache(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+
+	_, err := d.PutObject(ctx, "bkt", "k1", bytes.NewReader([]byte("hello")), storage.WithContentType("text/plain"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	obj, err := d.GetObject(ctx, "bkt", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj.Body.Close()
+	if obj.ContentType != "text/plain" {
+		t.Errorf("ContentType = %q, want text/plain", obj.ContentType)
+	}
+
+	obj2, err := d.GetObject(ctx, "bkt", "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer obj2.Body.Close()
+	if obj2.ContentType != "text/plain" {
+		t.Errorf("ContentType on cached read = %q, want text/plain", obj2.ContentType)
+	}
+}
+
+func TestDriverConcurrentDifferentKeys(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			key := string(rune('a' + i))
+			_, err := d.PutObject(ctx, "bkt", key, bytes.NewReader([]byte("x")))
+			if err != nil {
+				t.Errorf("concurrent put %s: %v", key, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	out, err := d.ListObjects(ctx, "bkt", "", storage.WithRecursive(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Contents) != 20 {
+		t.Errorf("Contents = %d, want 20", len(out.Contents))
+	}
+}
