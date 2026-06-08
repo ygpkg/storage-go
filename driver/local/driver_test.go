@@ -45,7 +45,7 @@ func TestDriverRegistersSelf(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := storage.New(storage.Config{Driver: storage.DriverLocal, RootDir: t.TempDir()})
+	s, err := storage.New("local", storage.Config{RootDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("storage.New(local) = %v", err)
 	}

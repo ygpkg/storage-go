@@ -73,3 +73,8 @@ type DeleteFailure struct {
 func (e *BulkDeleteError) Error() string {
 	return fmt.Sprintf("storage: %d object(s) failed to delete", len(e.Failures))
 }
+
+// wrapInvalidConfig 把 msg 包装为 ErrInvalidConfig 变体。
+func wrapInvalidConfig(msg string) error {
+	return fmt.Errorf("%w: %s", ErrInvalidConfig, msg)
+}

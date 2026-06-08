@@ -36,7 +36,7 @@ storage-go/
 ├── errors.go            # sentinel error
 ├── options.go           # PutOption / GetOption / ListOption
 ├── types.go             # ObjectInfo / PutObjectResult / GetObjectResult / ListObjectsOutput 等
-├── registry.go          # driver 注册表，Register() / open()
+├── registry.go          # driver 注册表，Register() / LookupDriver() / Drivers()
 ├── client.go            # 已移除
 ├── config.go            # Config 定义与 New() 工厂
 
@@ -79,7 +79,7 @@ func init() { storage.Register("minio", func(cfg storage.Config) (storage.Storag
 import storage "github.com/yourorg/storage-go"
 import _ "github.com/yourorg/storage-go/driver/minio"
 
-client, err := storage.New(storage.Config{Driver: storage.DriverMinio, ...})
+client, err := storage.New("minio", storage.Config{...})
 ```
 
 ## 三、StoragePath 设计

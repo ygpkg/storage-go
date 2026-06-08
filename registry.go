@@ -5,28 +5,53 @@ import (
 	"sync"
 )
 
-// DriverFactory driver 工厂函数。
 type DriverFactory func(Config) (Storage, error)
 
 var (
 	registryMu sync.RWMutex
-	registry   = map[string]DriverFactory{}
+	registry   = make(map[string]DriverFactory)
 )
 
-// Register 注册一个 driver 工厂。由各 driver 包的 init() 调用。
-func Register(name string, f DriverFactory) {
+// Register 注册存储驱动。
+//
+// 通常由 driver 包的 init() 调用。
+func Register(name string, factory DriverFactory) {
+	if name == "" {
+		panic("storage: register driver with empty name")
+	}
+
+	if factory == nil {
+		panic("storage: register nil driver factory")
+	}
+
 	registryMu.Lock()
 	defer registryMu.Unlock()
-	registry[name] = f
+
+	if _, exists := registry[name]; exists {
+		panic(fmt.Sprintf("storage: driver %q already registered", name))
+	}
+
+	registry[name] = factory
 }
 
-func open(name string) (DriverFactory, bool) {
+// LookupDriver 获取驱动工厂。
+func LookupDriver(name string) (DriverFactory, bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	f, ok := registry[name]
-	return f, ok
+
+	factory, ok := registry[name]
+	return factory, ok
 }
 
-func wrapInvalidConfig(msg string) error {
-	return fmt.Errorf("%w: %s", ErrInvalidConfig, msg)
+// Drivers 返回所有已注册驱动名称。
+func Drivers() []string {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+
+	names := make([]string, 0, len(registry))
+	for name := range registry {
+		names = append(names, name)
+	}
+
+	return names
 }

@@ -30,8 +30,7 @@ import (
 )
 
 func main() {
-    s, _ := storage.New(storage.Config{
-        Driver:    storage.DriverMinio,
+    s, _ := storage.New("minio", storage.Config{
         Endpoint:  "play.min.io",
         AccessKey: "minioadmin",
         SecretKey: "minioadmin",
@@ -52,8 +51,7 @@ func main() {
 ### 本地磁盘
 
 ```go
-    s, _ := storage.New(storage.Config{
-        Driver:      storage.DriverLocal,
+    s, _ := storage.New("local", storage.Config{
         RootDir:     "/tmp/storage",
         HTTPBaseURL: "http://localhost:8080",
         Bucket:      "avatars",
@@ -82,8 +80,7 @@ func main() {
 
 ```go
 // 从 MinIO 切换到 COS，只改配置
-    s, _ := storage.New(storage.Config{
-        Driver:    storage.DriverCOS,
+    s, _ := storage.New("cos", storage.Config{
         Endpoint:  "https://bucket-1250000000.cos.ap-shanghai.myqcloud.com",
         AccessKey: "xxx",
         SecretKey: "yyy",
