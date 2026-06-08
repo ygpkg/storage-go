@@ -415,14 +415,3 @@ func strPtr(s string) *string {
 	}
 	return &s
 }
-
-func isAlreadyExistsErr(err error) bool {
-	return false
-}
-
-func wrapS3Err(err error) error {
-	if err == nil {
-		return nil
-	}
-	return err
-}
