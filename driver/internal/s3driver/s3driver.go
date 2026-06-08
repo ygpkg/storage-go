@@ -64,10 +64,13 @@ func (d *Driver) newPath(bucket, key string) storage.StoragePath {
 func usePathStyle(endpoint string) bool {
 	u, err := url.Parse(endpoint)
 	if err != nil {
+		return true
+	}
+	host := strings.ToLower(u.Hostname())
+	if strings.Contains(host, "myqcloud.com") {
 		return false
 	}
-	host := u.Hostname()
-	return strings.Contains(host, "myqcloud.com")
+	return true
 }
 
 // ---------- Base ----------
