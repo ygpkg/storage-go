@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/insmtx/storage-go"
 	"github.com/insmtx/storage-go/driver/storagetest"
 )
 
@@ -12,7 +13,7 @@ func TestMinioIntegration(t *testing.T) {
 	if endpoint == "" {
 		t.Skip("set TEST_MINIO_ENDPOINT to enable integration test")
 	}
-	d, err := New(Config{
+	d, err := New(storage.Config{
 		Endpoint:  endpoint,
 		AccessKey: os.Getenv("TEST_MINIO_ACCESS_KEY"),
 		SecretKey: os.Getenv("TEST_MINIO_SECRET_KEY"),

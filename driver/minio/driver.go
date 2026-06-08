@@ -12,7 +12,7 @@ import (
 
 	"github.com/insmtx/storage-go/driver/internal"
 	"github.com/insmtx/storage-go/driver/registry"
-	"github.com/insmtx/storage-go/types"
+	"github.com/insmtx/storage-go"
 )
 
 func init() {
@@ -33,35 +33,42 @@ type Driver struct {
 	cfg    Config
 }
 
-func New(cfg Config) (*Driver, error) {
-	if cfg.Endpoint == "" || cfg.AccessKey == "" {
-		return nil, fmt.Errorf("%w: Endpoint and AccessKey are required", types.ErrInvalidConfig)
+func New(cfg storage.Config) (storage.Storage, error) {
+	dCfg := Config{
+		Endpoint:     cfg.Endpoint,
+		AccessKey:    cfg.AccessKey,
+		SecretKey:    cfg.SecretKey,
+		UseSSL:       cfg.UseSSL,
+		PublicDomain: cfg.PublicDomain,
 	}
-	c, err := minio.New(cfg.Endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
-		Secure: cfg.UseSSL,
+	if dCfg.Endpoint == "" || dCfg.AccessKey == "" {
+		return nil, fmt.Errorf("%w: Endpoint and AccessKey are required", storage.ErrInvalidConfig)
+	}
+	c, err := minio.New(dCfg.Endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(dCfg.AccessKey, dCfg.SecretKey, ""),
+		Secure: dCfg.UseSSL,
 	})
 	if err != nil {
 		return nil, err
 	}
 	core := &minio.Core{Client: c}
-	return &Driver{client: c, core: core, cfg: cfg}, nil
+	return &Driver{client: c, core: core, cfg: dCfg}, nil
 }
 
 func (d *Driver) Close() error { return nil }
 
-func (d *Driver) NewPath(bucket, key string) types.StoragePath {
+func (d *Driver) NewPath(bucket, key string) storage.StoragePath {
 	return &s3Path{bucket: bucket, key: key, baseURL: d.cfg.PublicDomain}
 }
 
-func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...types.PutOption) (*types.ObjectMeta, error) {
+func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...storage.PutOption) (*storage.ObjectMeta, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
 	if err := internal.ValidateKey(key); err != nil {
 		return nil, err
 	}
-	o := &types.PutOptions{}
+	o := &storage.PutOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -72,7 +79,7 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader,
 	if err != nil {
 		return nil, internal.WrapMinioErr(err)
 	}
-	return &types.ObjectMeta{
+	return &storage.ObjectMeta{
 		Path:        d.NewPath(bucket, key),
 		Size:        info.Size,
 		ETag:        info.ETag,
@@ -80,14 +87,14 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader,
 	}, nil
 }
 
-func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...types.GetOption) (*types.Object, error) {
+func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...storage.GetOption) (*storage.Object, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
 	if err := internal.ValidateKey(key); err != nil {
 		return nil, err
 	}
-	o := &types.GetOptions{}
+	o := &storage.GetOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -105,8 +112,8 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...type
 	if err != nil {
 		return nil, internal.WrapMinioErr(err)
 	}
-	return &types.Object{
-		ObjectMeta: types.ObjectMeta{
+	return &storage.Object{
+		ObjectMeta: storage.ObjectMeta{
 			Path:        d.NewPath(bucket, key),
 			Size:        stat.Size,
 			ETag:        stat.ETag,
@@ -116,7 +123,7 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...type
 	}, nil
 }
 
-func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*types.ObjectMeta, error) {
+func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*storage.ObjectMeta, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -127,7 +134,7 @@ func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*types.Obj
 	if err != nil {
 		return nil, internal.WrapMinioErr(err)
 	}
-	return &types.ObjectMeta{
+	return &storage.ObjectMeta{
 		Path:         d.NewPath(bucket, key),
 		Size:         stat.Size,
 		ETag:         stat.ETag,
@@ -165,26 +172,26 @@ func (d *Driver) DeleteObjects(ctx context.Context, bucket string, keys []string
 	}
 	close(objCh)
 	errCh := d.client.RemoveObjects(ctx, bucket, objCh, minio.RemoveObjectsOptions{})
-	var failures []types.DeleteFailure
+	var failures []storage.DeleteFailure
 	for r := range errCh {
 		if r.Err != nil {
-			failures = append(failures, types.DeleteFailure{Key: r.ObjectName, Err: internal.WrapMinioErr(r.Err)})
+			failures = append(failures, storage.DeleteFailure{Key: r.ObjectName, Err: internal.WrapMinioErr(r.Err)})
 		}
 	}
 	if len(failures) > 0 {
-		return &types.BulkDeleteError{Failures: failures}
+		return &storage.BulkDeleteError{Failures: failures}
 	}
 	return nil
 }
 
-func (d *Driver) CopyObject(ctx context.Context, src, dst types.StoragePath, opts ...types.CopyOption) (*types.ObjectMeta, error) {
+func (d *Driver) CopyObject(ctx context.Context, src, dst storage.StoragePath, opts ...storage.CopyOption) (*storage.ObjectMeta, error) {
 	sp, ok := src.(*s3Path)
 	if !ok {
-		return nil, fmt.Errorf("%w: src path is not minio", types.ErrInvalidPath)
+		return nil, fmt.Errorf("%w: src path is not minio", storage.ErrInvalidPath)
 	}
 	dp, ok := dst.(*s3Path)
 	if !ok {
-		return nil, fmt.Errorf("%w: dst path is not minio", types.ErrInvalidPath)
+		return nil, fmt.Errorf("%w: dst path is not minio", storage.ErrInvalidPath)
 	}
 	if err := internal.ValidateBucket(sp.bucket); err != nil {
 		return nil, err
@@ -198,7 +205,7 @@ func (d *Driver) CopyObject(ctx context.Context, src, dst types.StoragePath, opt
 	if err := internal.ValidateKey(dp.key); err != nil {
 		return nil, err
 	}
-	o := &types.CopyOptions{}
+	o := &storage.CopyOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -215,11 +222,11 @@ func (d *Driver) CopyObject(ctx context.Context, src, dst types.StoragePath, opt
 	return d.HeadObject(ctx, dp.bucket, dp.key)
 }
 
-func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ...types.ListOption) (*types.ListResult, error) {
+func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (*storage.ListResult, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
-	o := &types.ListOptions{}
+	o := &storage.ListOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -231,7 +238,7 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 		Recursive: o.Delimiter == "",
 		MaxKeys:   o.MaxKeys,
 	})
-	var objs []types.ObjectMeta
+	var objs []storage.ObjectMeta
 	var common []string
 	for obj := range res {
 		if obj.Err != nil {
@@ -244,17 +251,17 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 			common = append(common, obj.Key)
 			continue
 		}
-		objs = append(objs, types.ObjectMeta{
+		objs = append(objs, storage.ObjectMeta{
 			Path:         d.NewPath(bucket, obj.Key),
 			Size:         obj.Size,
 			ETag:         obj.ETag,
 			LastModified: obj.LastModified,
 		})
 	}
-	return &types.ListResult{Objects: objs, CommonPrefixes: common}, nil
+	return &storage.ListResult{Objects: objs, CommonPrefixes: common}, nil
 }
 
-func (d *Driver) ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...types.ListOption) (types.Pager[types.ObjectMeta], error) {
+func (d *Driver) ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (storage.Pager[storage.ObjectMeta], error) {
 	r, err := d.ListObjects(ctx, bucket, prefix, opts...)
 	if err != nil {
 		return nil, err
@@ -263,11 +270,11 @@ func (d *Driver) ListObjectsPage(ctx context.Context, bucket, prefix string, opt
 }
 
 type oneShotPager struct {
-	result *types.ListResult
+	result *storage.ListResult
 	done   bool
 }
 
-func (p *oneShotPager) Next() ([]types.ObjectMeta, error) {
+func (p *oneShotPager) Next() ([]storage.ObjectMeta, error) {
 	if p.done {
 		return nil, io.EOF
 	}
@@ -277,9 +284,9 @@ func (p *oneShotPager) Next() ([]types.ObjectMeta, error) {
 
 func (p *oneShotPager) HasMore() bool { return !p.done }
 
-func (d *Driver) GetPublicURL(ctx context.Context, p types.StoragePath) (string, error) {
+func (d *Driver) GetPublicURL(ctx context.Context, p storage.StoragePath) (string, error) {
 	if d.cfg.PublicDomain == "" {
-		return "", fmt.Errorf("%w: PublicDomain is required for GetPublicURL", types.ErrInvalidConfig)
+		return "", fmt.Errorf("%w: PublicDomain is required for GetPublicURL", storage.ErrInvalidConfig)
 	}
 	return p.URL(), nil
 }
@@ -312,14 +319,14 @@ func (d *Driver) PresignPut(ctx context.Context, bucket, key string, expire time
 	return u.String(), nil
 }
 
-func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...types.PutOption) (types.UploadID, error) {
+func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...storage.PutOption) (storage.UploadID, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return "", err
 	}
 	if err := internal.ValidateKey(key); err != nil {
 		return "", err
 	}
-	o := &types.PutOptions{}
+	o := &storage.PutOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -327,10 +334,10 @@ func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, 
 	if err != nil {
 		return "", internal.WrapMinioErr(err)
 	}
-	return types.UploadID(uid), nil
+	return storage.UploadID(uid), nil
 }
 
-func (d *Driver) UploadPart(ctx context.Context, bucket, key string, id types.UploadID, partNum int, r io.Reader, size int64) (*types.PartInfo, error) {
+func (d *Driver) UploadPart(ctx context.Context, bucket, key string, id storage.UploadID, partNum int, r io.Reader, size int64) (*storage.PartInfo, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -341,10 +348,10 @@ func (d *Driver) UploadPart(ctx context.Context, bucket, key string, id types.Up
 	if err != nil {
 		return nil, internal.WrapMinioErr(err)
 	}
-	return &types.PartInfo{PartNumber: partNum, ETag: info.ETag, Size: info.Size}, nil
+	return &storage.PartInfo{PartNumber: partNum, ETag: info.ETag, Size: info.Size}, nil
 }
 
-func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key string, id types.UploadID, parts []types.PartInfo) (*types.ObjectMeta, error) {
+func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key string, id storage.UploadID, parts []storage.PartInfo) (*storage.ObjectMeta, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -362,7 +369,7 @@ func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key string
 	return d.HeadObject(ctx, bucket, key)
 }
 
-func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key string, id types.UploadID) error {
+func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key string, id storage.UploadID) error {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return err
 	}
@@ -372,4 +379,4 @@ func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key string, i
 	return internal.WrapMinioErr(d.core.AbortMultipartUpload(ctx, bucket, key, string(id)))
 }
 
-var _ types.Storage = (*Driver)(nil)
+var _ storage.Storage = (*Driver)(nil)

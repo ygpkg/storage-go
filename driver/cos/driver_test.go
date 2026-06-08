@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/insmtx/storage-go"
 	"github.com/insmtx/storage-go/driver/storagetest"
 )
 
@@ -12,7 +13,7 @@ func TestCosIntegration(t *testing.T) {
 	if endpoint == "" {
 		t.Skip("set TEST_COS_ENDPOINT to enable integration test")
 	}
-	d, err := New(Config{
+	d, err := New(storage.Config{
 		Endpoint:  endpoint,
 		AccessKey: os.Getenv("TEST_COS_ACCESS_KEY"),
 		SecretKey: os.Getenv("TEST_COS_SECRET_KEY"),

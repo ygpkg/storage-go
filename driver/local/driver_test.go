@@ -11,12 +11,22 @@ import (
 
 	"github.com/insmtx/storage-go/driver/registry"
 	"github.com/insmtx/storage-go/driver/storagetest"
-	"github.com/insmtx/storage-go/types"
+	"github.com/insmtx/storage-go"
 )
 
 func newTestDriver(t *testing.T) *Driver {
 	t.Helper()
-	d, err := New(Config{BaseDir: t.TempDir()})
+	d, err := New(storage.Config{BaseDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d.(*Driver)
+}
+
+func newTestStorage(t *testing.T) storage.Storage {
+	t.Helper()
+	d, err := New(storage.Config{BaseDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,18 +35,18 @@ func newTestDriver(t *testing.T) *Driver {
 }
 
 func TestDriverNewRequiresBaseDir(t *testing.T) {
-	_, err := New(Config{})
+	_, err := New(storage.Config{})
 	if err == nil {
 		t.Fatal("expected error for empty BaseDir")
 	}
-	if !errors.Is(err, types.ErrInvalidConfig) {
+	if !errors.Is(err, storage.ErrInvalidConfig) {
 		t.Errorf("err = %v, want ErrInvalidConfig", err)
 	}
 }
 
 func TestDriverRegistersSelf(t *testing.T) {
 	registry.Reset()
-	_, err := New(Config{BaseDir: t.TempDir()})
+	_, err := New(storage.Config{BaseDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +63,7 @@ func TestDriverPutGet(t *testing.T) {
 
 	data := []byte("hello, world")
 	meta, err := d.PutObject(ctx, "bkt", "k1", bytes.NewReader(data), int64(len(data)),
-		types.WithContentType("text/plain"))
+		storage.WithContentType("text/plain"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +102,7 @@ func TestDriverHeadDelete(t *testing.T) {
 	if err := d.DeleteObject(ctx, "bkt", "k1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.HeadObject(ctx, "bkt", "k1"); !errors.Is(err, types.ErrNotFound) {
+	if _, err := d.HeadObject(ctx, "bkt", "k1"); !errors.Is(err, storage.ErrNotFound) {
 		t.Errorf("HeadObject after delete err = %v, want ErrNotFound", err)
 	}
 }
@@ -105,7 +115,7 @@ func TestDriverList(t *testing.T) {
 	_, _ = d.PutObject(ctx, "bkt", "a/2.png", bytes.NewReader([]byte("2")), 1)
 	_, _ = d.PutObject(ctx, "bkt", "b/1.png", bytes.NewReader([]byte("3")), 1)
 
-	r, err := d.ListObjects(ctx, "bkt", "", types.WithDelimiter("/"))
+	r, err := d.ListObjects(ctx, "bkt", "", storage.WithDelimiter("/"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,11 +151,11 @@ func TestDriverPresignNotSupported(t *testing.T) {
 	d := newTestDriver(t)
 	ctx := context.Background()
 	_, err := d.PresignGet(ctx, "bkt", "k1", 60)
-	if !errors.Is(err, types.ErrNotSupported) {
+	if !errors.Is(err, storage.ErrNotSupported) {
 		t.Errorf("PresignGet err = %v, want ErrNotSupported", err)
 	}
 	_, err = d.PresignPut(ctx, "bkt", "k1", 60)
-	if !errors.Is(err, types.ErrNotSupported) {
+	if !errors.Is(err, storage.ErrNotSupported) {
 		t.Errorf("PresignPut err = %v, want ErrNotSupported", err)
 	}
 }
@@ -171,7 +181,7 @@ func TestDriverConcurrentSameBucket(t *testing.T) {
 func TestDriverInvalidBucketName(t *testing.T) {
 	d := newTestDriver(t)
 	_, err := d.PutObject(context.Background(), "BadBucket", "k", bytes.NewReader([]byte("x")), 1)
-	if !errors.Is(err, types.ErrInvalidPath) {
+	if !errors.Is(err, storage.ErrInvalidPath) {
 		t.Errorf("err = %v, want ErrInvalidPath", err)
 	}
 }
@@ -179,16 +189,13 @@ func TestDriverInvalidBucketName(t *testing.T) {
 func TestDriverInvalidKey(t *testing.T) {
 	d := newTestDriver(t)
 	_, err := d.PutObject(context.Background(), "bkt", "/abc", bytes.NewReader([]byte("x")), 1)
-	if !errors.Is(err, types.ErrInvalidPath) {
+	if !errors.Is(err, storage.ErrInvalidPath) {
 		t.Errorf("err = %v, want ErrInvalidPath", err)
 	}
 }
 
 func TestDriverStoragetestSuite(t *testing.T) {
-	d, err := New(Config{BaseDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	d := newTestStorage(t)
 	defer d.Close()
 	storagetest.RunSuite(t, d, "test-bucket")
 }

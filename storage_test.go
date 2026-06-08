@@ -1,63 +1,62 @@
-package storage
+package storage_test
 
 import (
 	"context"
-	"errors"
 	"io"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/insmtx/storage-go"
 	"github.com/insmtx/storage-go/driver/registry"
-	"github.com/insmtx/storage-go/types"
 )
 
-type minimalStorage struct{}
+type testStorage struct{}
 
-func (s *minimalStorage) Close() error { return nil }
-func (s *minimalStorage) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...types.PutOption) (*types.ObjectMeta, error) {
-	return &types.ObjectMeta{Size: size}, nil
-}
-func (s *minimalStorage) GetObject(ctx context.Context, bucket, key string, opts ...types.GetOption) (*types.Object, error) {
+func (s *testStorage) GetObject(ctx context.Context, bucket, key string, opts ...storage.GetOption) (*storage.Object, error) {
 	return nil, nil
 }
-func (s *minimalStorage) HeadObject(ctx context.Context, bucket, key string) (*types.ObjectMeta, error) {
+func (s *testStorage) HeadObject(ctx context.Context, bucket, key string) (*storage.ObjectMeta, error) {
 	return nil, nil
 }
-func (s *minimalStorage) DeleteObject(ctx context.Context, bucket, key string) error { return nil }
-func (s *minimalStorage) DeleteObjects(ctx context.Context, bucket string, keys []string) error {
+func (s *testStorage) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...storage.PutOption) (*storage.ObjectMeta, error) {
+	return nil, nil
+}
+func (s *testStorage) DeleteObject(ctx context.Context, bucket, key string) error { return nil }
+func (s *testStorage) DeleteObjects(ctx context.Context, bucket string, keys []string) error {
 	return nil
 }
-func (s *minimalStorage) CopyObject(ctx context.Context, src, dst types.StoragePath, opts ...types.CopyOption) (*types.ObjectMeta, error) {
+func (s *testStorage) CopyObject(ctx context.Context, src, dst storage.StoragePath, opts ...storage.CopyOption) (*storage.ObjectMeta, error) {
 	return nil, nil
 }
-func (s *minimalStorage) ListObjects(ctx context.Context, bucket, prefix string, opts ...types.ListOption) (*types.ListResult, error) {
+func (s *testStorage) ListObjects(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (*storage.ListResult, error) {
 	return nil, nil
 }
-func (s *minimalStorage) ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...types.ListOption) (types.Pager[types.ObjectMeta], error) {
+func (s *testStorage) ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (storage.Pager[storage.ObjectMeta], error) {
 	return nil, nil
 }
-func (s *minimalStorage) GetPublicURL(ctx context.Context, path types.StoragePath) (string, error) {
+func (s *testStorage) GetPublicURL(ctx context.Context, path storage.StoragePath) (string, error) {
 	return "", nil
 }
-func (s *minimalStorage) PresignGet(ctx context.Context, bucket, key string, expire time.Duration) (string, error) {
+func (s *testStorage) PresignGet(ctx context.Context, bucket, key string, expire time.Duration) (string, error) {
 	return "", nil
 }
-func (s *minimalStorage) PresignPut(ctx context.Context, bucket, key string, expire time.Duration) (string, error) {
+func (s *testStorage) PresignPut(ctx context.Context, bucket, key string, expire time.Duration) (string, error) {
 	return "", nil
 }
-func (s *minimalStorage) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...types.PutOption) (types.UploadID, error) {
-	return "upload-1", nil
+func (s *testStorage) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...storage.PutOption) (storage.UploadID, error) {
+	return "", nil
 }
-func (s *minimalStorage) UploadPart(ctx context.Context, bucket, key string, id types.UploadID, partNum int, r io.Reader, size int64) (*types.PartInfo, error) {
-	return &types.PartInfo{PartNumber: partNum, Size: size}, nil
+func (s *testStorage) UploadPart(ctx context.Context, bucket, key string, id storage.UploadID, partNum int, r io.Reader, size int64) (*storage.PartInfo, error) {
+	return nil, nil
 }
-func (s *minimalStorage) CompleteMultipartUpload(ctx context.Context, bucket, key string, id types.UploadID, parts []types.PartInfo) (*types.ObjectMeta, error) {
-	return &types.ObjectMeta{}, nil
+func (s *testStorage) CompleteMultipartUpload(ctx context.Context, bucket, key string, id storage.UploadID, parts []storage.PartInfo) (*storage.ObjectMeta, error) {
+	return nil, nil
 }
-func (s *minimalStorage) AbortMultipartUpload(ctx context.Context, bucket, key string, id types.UploadID) error {
+func (s *testStorage) AbortMultipartUpload(ctx context.Context, bucket, key string, id storage.UploadID) error {
 	return nil
 }
+func (s *testStorage) Close() error { return nil }
 
 func TestMain(m *testing.M) {
 	code := m.Run()
@@ -65,49 +64,30 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func TestNewDriverNotRegistered(t *testing.T) {
-	_, err := New(Config{Driver: "unregistered-driver-xyz"})
-	if err == nil {
-		t.Fatal("expected error for unregistered driver")
-	}
-	if !errors.Is(err, types.ErrInvalidConfig) {
-		t.Errorf("err = %v, want ErrInvalidConfig", err)
+func TestGetUnregistered(t *testing.T) {
+	_, ok := registry.Get("does-not-exist")
+	if ok {
+		t.Error("Get should return false for unknown name")
 	}
 }
 
-func TestNewDriverEmpty(t *testing.T) {
-	_, err := New(Config{})
-	if err == nil {
-		t.Fatal("expected error for empty driver")
-	}
-	if !errors.Is(err, types.ErrInvalidConfig) {
-		t.Errorf("err = %v, want ErrInvalidConfig", err)
-	}
-}
+func TestGetRegistered(t *testing.T) {
+	defer registry.Reset()
 
-func TestNewDriverRegistered(t *testing.T) {
-	registry.Register("stub-test", func(cfg Config) (types.Storage, error) {
-		return &minimalStorage{}, nil
+	registry.Register("test-factory", func(cfg storage.Config) (storage.Storage, error) {
+		return &testStorage{}, nil
 	})
 
-	s, err := New(Config{Driver: "stub-test"})
+	f, ok := registry.Get("test-factory")
+	if !ok {
+		t.Fatal("Get should return true after Register")
+	}
+	s, err := f(storage.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s == nil {
-		t.Fatal("storage is nil")
+		t.Fatal("factory returned nil storage")
 	}
 	defer s.Close()
-}
-
-func TestNewDriverFactoryMismatch(t *testing.T) {
-	registry.Register("bad-factory", "not-a-function")
-
-	_, err := New(Config{Driver: "bad-factory"})
-	if err == nil {
-		t.Fatal("expected error for bad factory signature")
-	}
-	if !errors.Is(err, types.ErrInvalidConfig) {
-		t.Errorf("err = %v, want ErrInvalidConfig", err)
-	}
 }

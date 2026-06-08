@@ -5,7 +5,7 @@ import (
 
 	"github.com/insmtx/storage-go/driver/minio"
 	"github.com/insmtx/storage-go/driver/registry"
-	"github.com/insmtx/storage-go/types"
+	"github.com/insmtx/storage-go"
 )
 
 func init() {
@@ -30,23 +30,24 @@ type Driver struct {
 	*minio.Driver
 }
 
-func New(cfg Config) (*Driver, error) {
-	if cfg.Endpoint == "" || cfg.AccessKey == "" {
-		return nil, fmt.Errorf("%w: Endpoint and AccessKey are required", types.ErrInvalidConfig)
-	}
-	m, err := minio.New(minio.Config{
+func New(cfg storage.Config) (storage.Storage, error) {
+	dCfg := Config{
 		Endpoint:     cfg.Endpoint,
 		AccessKey:    cfg.AccessKey,
 		SecretKey:    cfg.SecretKey,
 		UseSSL:       cfg.UseSSL,
 		PublicDomain: cfg.PublicDomain,
-	})
+	}
+	if dCfg.Endpoint == "" || dCfg.AccessKey == "" {
+		return nil, fmt.Errorf("%w: Endpoint and AccessKey are required", storage.ErrInvalidConfig)
+	}
+	m, err := minio.New(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &Driver{Driver: m}, nil
+	return &Driver{Driver: m.(*minio.Driver)}, nil
 }
 
 func (d *Driver) Close() error { return d.Driver.Close() }
 
-var _ types.Storage = (*Driver)(nil)
+var _ storage.Storage = (*Driver)(nil)

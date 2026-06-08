@@ -6,7 +6,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/minio/minio-go/v7 v7.0.76
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.58
-	golang.org/x/sync v0.16.0
 )
 
 require (

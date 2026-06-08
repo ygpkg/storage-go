@@ -9,19 +9,19 @@ import (
 	"io"
 	"testing"
 
-	"github.com/insmtx/storage-go/types"
+	"github.com/insmtx/storage-go"
 )
 
 // RunSuite 对一个 storage 实例跑通用一致性测试。
 // bucket 参数指定测试用的 bucket 名称。
-func RunSuite(t *testing.T, s types.Storage, bucket string) {
+func RunSuite(t *testing.T, s storage.Storage, bucket string) {
 	t.Helper()
 	ctx := context.Background()
 
 	t.Run("PutGet", func(t *testing.T) {
 		data := []byte("hello storagetest")
 		meta, err := s.PutObject(ctx, bucket, "k1", bytes.NewReader(data), int64(len(data)),
-			types.WithContentType("text/plain"))
+			storage.WithContentType("text/plain"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -47,7 +47,7 @@ func RunSuite(t *testing.T, s types.Storage, bucket string) {
 		if err := s.DeleteObject(ctx, bucket, "k1"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.HeadObject(ctx, bucket, "k1"); !errors.Is(err, types.ErrNotFound) {
+		if _, err := s.HeadObject(ctx, bucket, "k1"); !errors.Is(err, storage.ErrNotFound) {
 			t.Errorf("HeadObject after delete = %v, want ErrNotFound", err)
 		}
 	})
@@ -58,7 +58,7 @@ func RunSuite(t *testing.T, s types.Storage, bucket string) {
 		_, _ = s.PutObject(ctx, bucket, "a/2.txt", bytes.NewReader([]byte("2")), 1)
 		_, _ = s.PutObject(ctx, bucket, "b/1.txt", bytes.NewReader([]byte("3")), 1)
 
-		r, err := s.ListObjects(ctx, bucket, "", types.WithDelimiter("/"))
+		r, err := s.ListObjects(ctx, bucket, "", storage.WithDelimiter("/"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -73,9 +73,9 @@ func RunSuite(t *testing.T, s types.Storage, bucket string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var dst types.StoragePath
+		var dst storage.StoragePath
 		if mp, ok := s.(interface {
-			NewPath(string, string) types.StoragePath
+			NewPath(string, string) storage.StoragePath
 		}); ok {
 			dst = mp.NewPath(bucket, "dst.txt")
 		} else {
@@ -114,10 +114,10 @@ func RunSuite(t *testing.T, s types.Storage, bucket string) {
 	})
 
 	t.Run("Errors", func(t *testing.T) {
-		if _, err := s.HeadObject(ctx, bucket, "nonexistent-xyz"); !errors.Is(err, types.ErrNotFound) {
+		if _, err := s.HeadObject(ctx, bucket, "nonexistent-xyz"); !errors.Is(err, storage.ErrNotFound) {
 			t.Errorf("HeadObject(missing) err = %v, want ErrNotFound", err)
 		}
-		if _, err := s.PutObject(ctx, bucket, "/bad-key", bytes.NewReader([]byte("x")), 1); !errors.Is(err, types.ErrInvalidPath) {
+		if _, err := s.PutObject(ctx, bucket, "/bad-key", bytes.NewReader([]byte("x")), 1); !errors.Is(err, storage.ErrInvalidPath) {
 			t.Errorf("PutObject(bad-key) err = %v, want ErrInvalidPath", err)
 		}
 	})

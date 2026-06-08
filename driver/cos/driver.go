@@ -13,7 +13,7 @@ import (
 
 	"github.com/insmtx/storage-go/driver/internal"
 	"github.com/insmtx/storage-go/driver/registry"
-	"github.com/insmtx/storage-go/types"
+	"github.com/insmtx/storage-go"
 )
 
 func init() {
@@ -39,20 +39,26 @@ type Driver struct {
 // COS SDK 的 client 是 bucket 绑定的（BaseURL.BucketURL），所以 driver
 // 持有一个共享的 *http.Client，按当前 bucket 临时构造 *cos.Client。
 // Endpoint 必须是带 bucket 的 COS 访问 URL。
-func New(cfg Config) (*Driver, error) {
-	if cfg.Endpoint == "" || cfg.AccessKey == "" {
-		return nil, fmt.Errorf("%w: Endpoint and AccessKey are required", types.ErrInvalidConfig)
+func New(cfg storage.Config) (storage.Storage, error) {
+	dCfg := Config{
+		Endpoint:     cfg.Endpoint,
+		AccessKey:    cfg.AccessKey,
+		SecretKey:    cfg.SecretKey,
+		PublicDomain: cfg.PublicDomain,
 	}
-	if _, err := url.Parse(cfg.Endpoint); err != nil {
-		return nil, fmt.Errorf("%w: invalid endpoint: %v", types.ErrInvalidConfig, err)
+	if dCfg.Endpoint == "" || dCfg.AccessKey == "" {
+		return nil, fmt.Errorf("%w: Endpoint and AccessKey are required", storage.ErrInvalidConfig)
+	}
+	if _, err := url.Parse(dCfg.Endpoint); err != nil {
+		return nil, fmt.Errorf("%w: invalid endpoint: %v", storage.ErrInvalidConfig, err)
 	}
 	hc := &http.Client{
 		Transport: &cos.AuthorizationTransport{
-			SecretID:  cfg.AccessKey,
-			SecretKey: cfg.SecretKey,
+			SecretID:  dCfg.AccessKey,
+			SecretKey: dCfg.SecretKey,
 		},
 	}
-	return &Driver{httpClient: hc, cfg: cfg}, nil
+	return &Driver{httpClient: hc, cfg: dCfg}, nil
 }
 
 // client 返回一个绑定到指定 bucket 的 COS client。
@@ -64,7 +70,7 @@ func (d *Driver) client(bucket string) (*cos.Client, error) {
 	}
 	u, err := url.Parse(d.cfg.Endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("%w: invalid endpoint: %v", types.ErrInvalidConfig, err)
+		return nil, fmt.Errorf("%w: invalid endpoint: %v", storage.ErrInvalidConfig, err)
 	}
 	c := cos.NewClient(&cos.BaseURL{BucketURL: u}, d.httpClient)
 	c.DisableURLCheck()
@@ -73,11 +79,11 @@ func (d *Driver) client(bucket string) (*cos.Client, error) {
 
 func (d *Driver) Close() error { return nil }
 
-func (d *Driver) NewPath(bucket, key string) types.StoragePath {
+func (d *Driver) NewPath(bucket, key string) storage.StoragePath {
 	return &s3Path{bucket: bucket, key: key, baseURL: d.cfg.PublicDomain}
 }
 
-func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...types.PutOption) (*types.ObjectMeta, error) {
+func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...storage.PutOption) (*storage.ObjectMeta, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -88,7 +94,7 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader,
 	if err != nil {
 		return nil, err
 	}
-	o := &types.PutOptions{}
+	o := &storage.PutOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -106,7 +112,7 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader,
 	if resp != nil {
 		etag = resp.Header.Get("ETag")
 	}
-	return &types.ObjectMeta{
+	return &storage.ObjectMeta{
 		Path:        d.NewPath(bucket, key),
 		Size:        size,
 		ETag:        etag,
@@ -114,7 +120,7 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader,
 	}, nil
 }
 
-func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...types.GetOption) (*types.Object, error) {
+func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...storage.GetOption) (*storage.Object, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -125,7 +131,7 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...type
 	if err != nil {
 		return nil, err
 	}
-	o := &types.GetOptions{}
+	o := &storage.GetOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -138,12 +144,12 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...type
 		return nil, wrapCosErr(err)
 	}
 	if resp == nil {
-		return nil, fmt.Errorf("%w: nil response from cos", types.ErrNotFound)
+		return nil, fmt.Errorf("%w: nil response from cos", storage.ErrNotFound)
 	}
 	contentType := resp.Header.Get("Content-Type")
 	etag := resp.Header.Get("ETag")
-	return &types.Object{
-		ObjectMeta: types.ObjectMeta{
+	return &storage.Object{
+		ObjectMeta: storage.ObjectMeta{
 			Path:        d.NewPath(bucket, key),
 			Size:        resp.ContentLength,
 			ETag:        etag,
@@ -153,7 +159,7 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...type
 	}, nil
 }
 
-func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*types.ObjectMeta, error) {
+func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*storage.ObjectMeta, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -169,9 +175,9 @@ func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*types.Obj
 		return nil, wrapCosErr(err)
 	}
 	if resp == nil {
-		return nil, fmt.Errorf("%w: nil response from cos", types.ErrNotFound)
+		return nil, fmt.Errorf("%w: nil response from cos", storage.ErrNotFound)
 	}
-	m := &types.ObjectMeta{
+	m := &storage.ObjectMeta{
 		Path:        d.NewPath(bucket, key),
 		Size:        resp.ContentLength,
 		ETag:        resp.Header.Get("ETag"),
@@ -223,23 +229,23 @@ func (d *Driver) DeleteObjects(ctx context.Context, bucket string, keys []string
 		return wrapCosErr(err)
 	}
 	if res != nil && len(res.Errors) > 0 {
-		failures := make([]types.DeleteFailure, 0, len(res.Errors))
+		failures := make([]storage.DeleteFailure, 0, len(res.Errors))
 		for _, e := range res.Errors {
-			failures = append(failures, types.DeleteFailure{Key: e.Key, Err: fmt.Errorf("%s: %s", e.Code, e.Message)})
+			failures = append(failures, storage.DeleteFailure{Key: e.Key, Err: fmt.Errorf("%s: %s", e.Code, e.Message)})
 		}
-		return &types.BulkDeleteError{Failures: failures}
+		return &storage.BulkDeleteError{Failures: failures}
 	}
 	return nil
 }
 
-func (d *Driver) CopyObject(ctx context.Context, src, dst types.StoragePath, opts ...types.CopyOption) (*types.ObjectMeta, error) {
+func (d *Driver) CopyObject(ctx context.Context, src, dst storage.StoragePath, opts ...storage.CopyOption) (*storage.ObjectMeta, error) {
 	sp, ok := src.(*s3Path)
 	if !ok {
-		return nil, fmt.Errorf("%w: src path is not cos", types.ErrInvalidPath)
+		return nil, fmt.Errorf("%w: src path is not cos", storage.ErrInvalidPath)
 	}
 	dp, ok := dst.(*s3Path)
 	if !ok {
-		return nil, fmt.Errorf("%w: dst path is not cos", types.ErrInvalidPath)
+		return nil, fmt.Errorf("%w: dst path is not cos", storage.ErrInvalidPath)
 	}
 	if err := internal.ValidateBucket(sp.bucket); err != nil {
 		return nil, err
@@ -257,7 +263,7 @@ func (d *Driver) CopyObject(ctx context.Context, src, dst types.StoragePath, opt
 	if err != nil {
 		return nil, err
 	}
-	o := &types.CopyOptions{}
+	o := &storage.CopyOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -277,7 +283,7 @@ func (d *Driver) CopyObject(ctx context.Context, src, dst types.StoragePath, opt
 	return d.HeadObject(ctx, dp.bucket, dp.key)
 }
 
-func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ...types.ListOption) (*types.ListResult, error) {
+func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (*storage.ListResult, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -285,7 +291,7 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 	if err != nil {
 		return nil, err
 	}
-	o := &types.ListOptions{}
+	o := &storage.ListOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -302,12 +308,12 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 	if err != nil {
 		return nil, wrapCosErr(err)
 	}
-	objs := make([]types.ObjectMeta, 0, len(res.Contents))
+	objs := make([]storage.ObjectMeta, 0, len(res.Contents))
 	for _, obj := range res.Contents {
 		if obj.Key == "" {
 			continue
 		}
-		objs = append(objs, types.ObjectMeta{
+		objs = append(objs, storage.ObjectMeta{
 			Path:         d.NewPath(bucket, obj.Key),
 			Size:         obj.Size,
 			ETag:         obj.ETag,
@@ -316,7 +322,7 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 	}
 	common := make([]string, 0, len(res.CommonPrefixes))
 	common = append(common, res.CommonPrefixes...)
-	return &types.ListResult{
+	return &storage.ListResult{
 		Objects:        objs,
 		CommonPrefixes: common,
 		NextToken:      res.NextMarker,
@@ -324,7 +330,7 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 	}, nil
 }
 
-func (d *Driver) ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...types.ListOption) (types.Pager[types.ObjectMeta], error) {
+func (d *Driver) ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (storage.Pager[storage.ObjectMeta], error) {
 	r, err := d.ListObjects(ctx, bucket, prefix, opts...)
 	if err != nil {
 		return nil, err
@@ -333,11 +339,11 @@ func (d *Driver) ListObjectsPage(ctx context.Context, bucket, prefix string, opt
 }
 
 type oneShotPager struct {
-	result *types.ListResult
+	result *storage.ListResult
 	done   bool
 }
 
-func (p *oneShotPager) Next() ([]types.ObjectMeta, error) {
+func (p *oneShotPager) Next() ([]storage.ObjectMeta, error) {
 	if p.done {
 		return nil, io.EOF
 	}
@@ -346,9 +352,9 @@ func (p *oneShotPager) Next() ([]types.ObjectMeta, error) {
 }
 func (p *oneShotPager) HasMore() bool { return !p.done }
 
-func (d *Driver) GetPublicURL(ctx context.Context, p types.StoragePath) (string, error) {
+func (d *Driver) GetPublicURL(ctx context.Context, p storage.StoragePath) (string, error) {
 	if d.cfg.PublicDomain == "" {
-		return "", fmt.Errorf("%w: PublicDomain is required for GetPublicURL", types.ErrInvalidConfig)
+		return "", fmt.Errorf("%w: PublicDomain is required for GetPublicURL", storage.ErrInvalidConfig)
 	}
 	return p.URL(), nil
 }
@@ -389,7 +395,7 @@ func (d *Driver) PresignPut(ctx context.Context, bucket, key string, expire time
 	return u.String(), nil
 }
 
-func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...types.PutOption) (types.UploadID, error) {
+func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...storage.PutOption) (storage.UploadID, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return "", err
 	}
@@ -400,7 +406,7 @@ func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, 
 	if err != nil {
 		return "", err
 	}
-	o := &types.PutOptions{}
+	o := &storage.PutOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -411,10 +417,10 @@ func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, 
 	if err != nil {
 		return "", wrapCosErr(err)
 	}
-	return types.UploadID(res.UploadID), nil
+	return storage.UploadID(res.UploadID), nil
 }
 
-func (d *Driver) UploadPart(ctx context.Context, bucket, key string, id types.UploadID, partNum int, r io.Reader, size int64) (*types.PartInfo, error) {
+func (d *Driver) UploadPart(ctx context.Context, bucket, key string, id storage.UploadID, partNum int, r io.Reader, size int64) (*storage.PartInfo, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -436,14 +442,14 @@ func (d *Driver) UploadPart(ctx context.Context, bucket, key string, id types.Up
 	if resp != nil {
 		etag = resp.Header.Get("ETag")
 	}
-	return &types.PartInfo{
+	return &storage.PartInfo{
 		PartNumber: partNum,
 		ETag:       etag,
 		Size:       size,
 	}, nil
 }
 
-func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key string, id types.UploadID, parts []types.PartInfo) (*types.ObjectMeta, error) {
+func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key string, id storage.UploadID, parts []storage.PartInfo) (*storage.ObjectMeta, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -470,7 +476,7 @@ func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key string
 	return d.HeadObject(ctx, bucket, key)
 }
 
-func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key string, id types.UploadID) error {
+func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key string, id storage.UploadID) error {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return err
 	}
@@ -485,7 +491,7 @@ func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key string, i
 	return wrapCosErr(err)
 }
 
-// wrapCosErr 将 cos SDK 错误映射到 types 的 sentinel error。
+// wrapCosErr 将 cos SDK 错误映射到 storage 的 sentinel error。
 // 未识别的错误原样返回。
 func wrapCosErr(err error) error {
 	if err == nil {
@@ -494,25 +500,25 @@ func wrapCosErr(err error) error {
 	if resp, ok := err.(*cos.ErrorResponse); ok {
 		switch resp.Code {
 		case "NoSuchKey", "NoSuchBucket":
-			return fmt.Errorf("%w: %s", types.ErrNotFound, resp.Message)
+			return fmt.Errorf("%w: %s", storage.ErrNotFound, resp.Message)
 		case "AccessDenied":
-			return fmt.Errorf("%w: %s", types.ErrPermission, resp.Message)
+			return fmt.Errorf("%w: %s", storage.ErrPermission, resp.Message)
 		case "BucketAlreadyExists", "BucketAlreadyOwnedByYou":
-			return fmt.Errorf("%w: %s", types.ErrAlreadyExists, resp.Message)
+			return fmt.Errorf("%w: %s", storage.ErrAlreadyExists, resp.Message)
 		}
 	}
 	// 通过 HTTP 状态码 fallback
 	msg := err.Error()
 	if strings.Contains(msg, "404") {
-		return fmt.Errorf("%w: %s", types.ErrNotFound, msg)
+		return fmt.Errorf("%w: %s", storage.ErrNotFound, msg)
 	}
 	if strings.Contains(msg, "403") {
-		return fmt.Errorf("%w: %s", types.ErrPermission, msg)
+		return fmt.Errorf("%w: %s", storage.ErrPermission, msg)
 	}
 	return err
 }
 
-var _ types.Storage = (*Driver)(nil)
+var _ storage.Storage = (*Driver)(nil)
 
 // parseCosTime 解析 cos API 返回的时间字符串（ISO8601 / RFC1123）。
 func parseCosTime(s string) time.Time {

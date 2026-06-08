@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/insmtx/storage-go/types"
+	"github.com/insmtx/storage-go"
 )
 
 func TestValidateBucket(t *testing.T) {
@@ -32,7 +32,7 @@ func TestValidateBucket(t *testing.T) {
 		if !c.ok && err == nil {
 			t.Errorf("ValidateBucket(%q) = nil, want error", c.bucket)
 		}
-		if !c.ok && err != nil && !errors.Is(err, types.ErrInvalidPath) {
+		if !c.ok && err != nil && !errors.Is(err, storage.ErrInvalidPath) {
 			t.Errorf("ValidateBucket(%q) err = %v, want wrap ErrInvalidPath", c.bucket, err)
 		}
 	}
@@ -59,7 +59,7 @@ func TestValidateKey(t *testing.T) {
 		if !c.ok && err == nil {
 			t.Errorf("ValidateKey(%q) = nil, want error", c.key)
 		}
-		if !c.ok && err != nil && !errors.Is(err, types.ErrInvalidPath) {
+		if !c.ok && err != nil && !errors.Is(err, storage.ErrInvalidPath) {
 			t.Errorf("ValidateKey(%q) err = %v, want wrap ErrInvalidPath", c.key, err)
 		}
 	}

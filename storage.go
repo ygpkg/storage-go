@@ -1,12 +1,6 @@
 package storage
 
-import (
-	"fmt"
-	"time"
-
-	"github.com/insmtx/storage-go/driver/registry"
-	"github.com/insmtx/storage-go/types"
-)
+import "time"
 
 type DriverType string
 
@@ -33,28 +27,4 @@ type Config struct {
 	Timeout      time.Duration
 	MaxRetries   int
 	ExtraOptions map[string]string
-}
-
-func (c *Config) validate() error {
-	if c.Driver == "" {
-		return fmt.Errorf("%w: Driver is required", types.ErrInvalidConfig)
-	}
-	return nil
-}
-
-func New(cfg Config) (types.Storage, error) {
-	if err := cfg.validate(); err != nil {
-		return nil, err
-	}
-	raw, ok := registry.Get(string(cfg.Driver))
-	if !ok {
-		return nil, fmt.Errorf("%w: driver %q not registered (did you forget blank import?)",
-			types.ErrInvalidConfig, cfg.Driver)
-	}
-	f, ok := raw.(func(Config) (types.Storage, error))
-	if !ok {
-		return nil, fmt.Errorf("%w: driver %q factory signature mismatch",
-			types.ErrInvalidConfig, cfg.Driver)
-	}
-	return f(cfg)
 }

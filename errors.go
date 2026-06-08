@@ -1,15 +1,15 @@
 package storage
 
-import "github.com/insmtx/storage-go/types"
+import "errors"
 
 var (
-	ErrNotFound         = types.ErrNotFound
-	ErrAlreadyExists    = types.ErrAlreadyExists
-	ErrNotSupported     = types.ErrNotSupported
-	ErrInvalidPath      = types.ErrInvalidPath
-	ErrInvalidConfig    = types.ErrInvalidConfig
-	ErrPermission       = types.ErrPermission
-	ErrQuotaExceeded    = types.ErrQuotaExceeded
-	ErrCrossBackend     = types.ErrCrossBackend
-	ErrMultipartAborted = types.ErrMultipartAborted
+	ErrNotFound         = errors.New("storage: object not found")
+	ErrAlreadyExists    = errors.New("storage: object already exists")
+	ErrNotSupported     = errors.New("storage: operation not supported by this driver")
+	ErrInvalidPath      = errors.New("storage: invalid storage path")
+	ErrInvalidConfig    = errors.New("storage: invalid config")
+	ErrPermission       = errors.New("storage: permission denied")
+	ErrQuotaExceeded    = errors.New("storage: quota exceeded")
+	ErrCrossBackend     = errors.New("storage: cross-backend copy is not supported")
+	ErrMultipartAborted = errors.New("storage: multipart upload was aborted")
 )

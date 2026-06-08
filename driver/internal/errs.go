@@ -6,10 +6,10 @@ import (
 
 	miniogo "github.com/minio/minio-go/v7"
 
-	"github.com/insmtx/storage-go/types"
+	"github.com/insmtx/storage-go"
 )
 
-// WrapMinioErr 将 minio SDK 错误映射到 types 的 sentinel error。
+// WrapMinioErr 将 minio SDK 错误映射到 storage 的 sentinel error。
 // 未识别的错误原样返回。
 func WrapMinioErr(err error) error {
 	if err == nil {
@@ -19,11 +19,11 @@ func WrapMinioErr(err error) error {
 	if errors.As(err, &resp) {
 		switch resp.Code {
 		case "NoSuchKey", "NoSuchBucket":
-			return fmt.Errorf("%w: %s", types.ErrNotFound, resp.Message)
+			return fmt.Errorf("%w: %s", storage.ErrNotFound, resp.Message)
 		case "AccessDenied":
-			return fmt.Errorf("%w: %s", types.ErrPermission, resp.Message)
+			return fmt.Errorf("%w: %s", storage.ErrPermission, resp.Message)
 		case "BucketAlreadyExists", "BucketAlreadyOwnedByYou":
-			return fmt.Errorf("%w: %s", types.ErrAlreadyExists, resp.Message)
+			return fmt.Errorf("%w: %s", storage.ErrAlreadyExists, resp.Message)
 		}
 	}
 	return err

@@ -1,4 +1,4 @@
-package types
+package storage
 
 import "testing"
 
@@ -46,18 +46,5 @@ func TestCopyOption(t *testing.T) {
 	WithMetaReplace(map[string]string{"k": "v"})(o)
 	if !o.MetaReplace || o.MetaDirective != "REPLACE" || o.UserMeta["k"] != "v" {
 		t.Errorf("CopyOptions = %+v", o)
-	}
-}
-
-func TestDefaultUploadOptions(t *testing.T) {
-	o := DefaultUploadOptions()
-	if o.ChunkSize != 32*1024*1024 {
-		t.Errorf("ChunkSize = %d", o.ChunkSize)
-	}
-	if o.Concurrency != 5 {
-		t.Errorf("Concurrency = %d", o.Concurrency)
-	}
-	if o.MultipartThreshold != 128*1024*1024 {
-		t.Errorf("MultipartThreshold = %d", o.MultipartThreshold)
 	}
 }

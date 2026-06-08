@@ -1,4 +1,4 @@
-package types
+package storage
 
 type PutOption func(*PutOptions)
 
@@ -72,31 +72,4 @@ func WithMetaReplace(meta map[string]string) CopyOption {
 		o.UserMeta = meta
 		o.MetaDirective = "REPLACE"
 	}
-}
-
-type UploadOption func(*UploadOptions)
-
-type UploadOptions struct {
-	Size               int64
-	ChunkSize          int64
-	Concurrency        int
-	MultipartThreshold int64
-}
-
-func DefaultUploadOptions() *UploadOptions {
-	return &UploadOptions{
-		ChunkSize:          32 * 1024 * 1024,
-		Concurrency:        5,
-		MultipartThreshold: 128 * 1024 * 1024,
-	}
-}
-
-func WithObjectSize(n int64) UploadOption {
-	return func(o *UploadOptions) { o.Size = n }
-}
-func WithChunkSize(n int64) UploadOption {
-	return func(o *UploadOptions) { o.ChunkSize = n }
-}
-func WithConcurrency(n int) UploadOption {
-	return func(o *UploadOptions) { o.Concurrency = n }
 }

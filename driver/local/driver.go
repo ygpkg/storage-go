@@ -14,7 +14,7 @@ import (
 
 	"github.com/insmtx/storage-go/driver/internal"
 	"github.com/insmtx/storage-go/driver/registry"
-	"github.com/insmtx/storage-go/types"
+	"github.com/insmtx/storage-go"
 )
 
 func init() {
@@ -33,20 +33,24 @@ type Driver struct {
 	mp          *multipartStore
 }
 
-var _ types.Storage = (*Driver)(nil)
+var _ storage.Storage = (*Driver)(nil)
 
-func New(cfg Config) (*Driver, error) {
-	registry.Register("local", New)
-	if cfg.BaseDir == "" {
-		return nil, fmt.Errorf("%w: BaseDir is required", types.ErrInvalidConfig)
+func New(cfg storage.Config) (storage.Storage, error) {
+	dCfg := Config{
+		BaseDir:     cfg.BaseDir,
+		HTTPBaseURL: cfg.PublicDomain,
 	}
-	if err := os.MkdirAll(cfg.BaseDir, 0o755); err != nil {
+	registry.Register("local", New)
+	if dCfg.BaseDir == "" {
+		return nil, fmt.Errorf("%w: BaseDir is required", storage.ErrInvalidConfig)
+	}
+	if err := os.MkdirAll(dCfg.BaseDir, 0o755); err != nil {
 		return nil, err
 	}
 	return &Driver{
-		baseDir:  cfg.BaseDir,
-		httpBase: cfg.HTTPBaseURL,
-		mp:       newMultipartStore(cfg.BaseDir),
+		baseDir:  dCfg.BaseDir,
+		httpBase: dCfg.HTTPBaseURL,
+		mp:       newMultipartStore(dCfg.BaseDir),
 	}, nil
 }
 
@@ -61,7 +65,7 @@ func (d *Driver) dataPath(bucket, key string) string {
 	return filepath.Join(d.baseDir, "data", bucket, filepath.FromSlash(key))
 }
 
-func (d *Driver) NewPath(bucket, key string) types.StoragePath {
+func (d *Driver) NewPath(bucket, key string) storage.StoragePath {
 	return &filePath{
 		bucket:      bucket,
 		key:         key,
@@ -70,7 +74,7 @@ func (d *Driver) NewPath(bucket, key string) types.StoragePath {
 	}
 }
 
-func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...types.GetOption) (*types.Object, error) {
+func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...storage.GetOption) (*storage.Object, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -84,7 +88,7 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...type
 	dataP := d.dataPath(bucket, key)
 	if _, err := os.Stat(dataP); err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", types.ErrNotFound, key)
+			return nil, fmt.Errorf("%w: %s", storage.ErrNotFound, key)
 		}
 		return nil, err
 	}
@@ -96,8 +100,8 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...type
 	if err != nil {
 		return nil, err
 	}
-	return &types.Object{
-		ObjectMeta: types.ObjectMeta{
+	return &storage.Object{
+		ObjectMeta: storage.ObjectMeta{
 			Path:         d.NewPath(bucket, key),
 			Size:         meta.Size,
 			ETag:         meta.ETag,
@@ -109,7 +113,7 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...type
 	}, nil
 }
 
-func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*types.ObjectMeta, error) {
+func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*storage.ObjectMeta, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -122,9 +126,9 @@ func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*types.Obj
 
 	meta, err := readMeta(d.baseDir, bucket, key)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", types.ErrNotFound, key)
+		return nil, fmt.Errorf("%w: %s", storage.ErrNotFound, key)
 	}
-	return &types.ObjectMeta{
+	return &storage.ObjectMeta{
 		Path:         d.NewPath(bucket, key),
 		Size:         meta.Size,
 		ETag:         meta.ETag,
@@ -134,14 +138,14 @@ func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*types.Obj
 	}, nil
 }
 
-func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...types.PutOption) (*types.ObjectMeta, error) {
+func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...storage.PutOption) (*storage.ObjectMeta, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
 	if err := internal.ValidateKey(key); err != nil {
 		return nil, err
 	}
-	o := &types.PutOptions{}
+	o := &storage.PutOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -193,7 +197,7 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader,
 	if err := writeMeta(d.baseDir, bucket, key, meta); err != nil {
 		return nil, err
 	}
-	return &types.ObjectMeta{
+	return &storage.ObjectMeta{
 		Path:         d.NewPath(bucket, key),
 		Size:         meta.Size,
 		ETag:         meta.ETag,
@@ -221,19 +225,19 @@ func (d *Driver) DeleteObject(ctx context.Context, bucket, key string) error {
 }
 
 func (d *Driver) DeleteObjects(ctx context.Context, bucket string, keys []string) error {
-	var failures []types.DeleteFailure
+	var failures []storage.DeleteFailure
 	for _, k := range keys {
 		if err := d.DeleteObject(ctx, bucket, k); err != nil {
-			failures = append(failures, types.DeleteFailure{Key: k, Err: err})
+			failures = append(failures, storage.DeleteFailure{Key: k, Err: err})
 		}
 	}
 	if len(failures) > 0 {
-		return &types.BulkDeleteError{Failures: failures}
+		return &storage.BulkDeleteError{Failures: failures}
 	}
 	return nil
 }
 
-func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ...types.ListOption) (*types.ListResult, error) {
+func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (*storage.ListResult, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -241,7 +245,7 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 	l.RLock()
 	defer l.RUnlock()
 
-	o := &types.ListOptions{}
+	o := &storage.ListOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -250,7 +254,7 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 	}
 
 	prefixDir := filepath.Join(d.baseDir, "data", bucket)
-	var objects []types.ObjectMeta
+	var objects []storage.ObjectMeta
 	common := map[string]struct{}{}
 	delim := o.Delimiter
 
@@ -283,7 +287,7 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 		if err != nil {
 			return nil
 		}
-		objects = append(objects, types.ObjectMeta{
+		objects = append(objects, storage.ObjectMeta{
 			Path:         d.NewPath(bucket, relSlash),
 			Size:         meta.Size,
 			ETag:         meta.ETag,
@@ -300,13 +304,13 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 	for c := range common {
 		commonPrefixes = append(commonPrefixes, c)
 	}
-	return &types.ListResult{
+	return &storage.ListResult{
 		Objects:        objects,
 		CommonPrefixes: commonPrefixes,
 	}, nil
 }
 
-func (d *Driver) ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...types.ListOption) (types.Pager[types.ObjectMeta], error) {
+func (d *Driver) ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (storage.Pager[storage.ObjectMeta], error) {
 	res, err := d.ListObjects(ctx, bucket, prefix, opts...)
 	if err != nil {
 		return nil, err
@@ -315,11 +319,11 @@ func (d *Driver) ListObjectsPage(ctx context.Context, bucket, prefix string, opt
 }
 
 type oneShotPager struct {
-	result *types.ListResult
+	result *storage.ListResult
 	done   bool
 }
 
-func (p *oneShotPager) Next() ([]types.ObjectMeta, error) {
+func (p *oneShotPager) Next() ([]storage.ObjectMeta, error) {
 	if p.done {
 		return nil, io.EOF
 	}
@@ -329,26 +333,26 @@ func (p *oneShotPager) Next() ([]types.ObjectMeta, error) {
 
 func (p *oneShotPager) HasMore() bool { return !p.done }
 
-func (d *Driver) GetPublicURL(ctx context.Context, p types.StoragePath) (string, error) {
+func (d *Driver) GetPublicURL(ctx context.Context, p storage.StoragePath) (string, error) {
 	return p.URL(), nil
 }
 
 func (d *Driver) PresignGet(ctx context.Context, bucket, key string, expire time.Duration) (string, error) {
-	return "", types.ErrNotSupported
+	return "", storage.ErrNotSupported
 }
 
 func (d *Driver) PresignPut(ctx context.Context, bucket, key string, expire time.Duration) (string, error) {
-	return "", types.ErrNotSupported
+	return "", storage.ErrNotSupported
 }
 
-func (d *Driver) CopyObject(ctx context.Context, src, dst types.StoragePath, opts ...types.CopyOption) (*types.ObjectMeta, error) {
+func (d *Driver) CopyObject(ctx context.Context, src, dst storage.StoragePath, opts ...storage.CopyOption) (*storage.ObjectMeta, error) {
 	sp, ok := src.(*filePath)
 	if !ok {
-		return nil, fmt.Errorf("%w: src path type %T is not local", types.ErrInvalidPath, src)
+		return nil, fmt.Errorf("%w: src path type %T is not local", storage.ErrInvalidPath, src)
 	}
 	dp, ok := dst.(*filePath)
 	if !ok {
-		return nil, fmt.Errorf("%w: dst path type %T is not local", types.ErrInvalidPath, dst)
+		return nil, fmt.Errorf("%w: dst path type %T is not local", storage.ErrInvalidPath, dst)
 	}
 
 	first, second := sp.bucket, dp.bucket
@@ -366,7 +370,7 @@ func (d *Driver) CopyObject(ctx context.Context, src, dst types.StoragePath, opt
 	dstP := d.dataPath(dp.bucket, dp.key)
 
 	if _, err := os.Stat(srcP); err != nil {
-		return nil, fmt.Errorf("%w: %s", types.ErrNotFound, sp.key)
+		return nil, fmt.Errorf("%w: %s", storage.ErrNotFound, sp.key)
 	}
 	if err := os.MkdirAll(filepath.Dir(dstP), 0o755); err != nil {
 		return nil, err
@@ -410,7 +414,7 @@ func (d *Driver) CopyObject(ctx context.Context, src, dst types.StoragePath, opt
 	if err := writeMeta(d.baseDir, dp.bucket, dp.key, dstMeta); err != nil {
 		return nil, err
 	}
-	return &types.ObjectMeta{
+	return &storage.ObjectMeta{
 		Path:         d.NewPath(dp.bucket, dp.key),
 		Size:         dstMeta.Size,
 		ETag:         dstMeta.ETag,
@@ -420,7 +424,7 @@ func (d *Driver) CopyObject(ctx context.Context, src, dst types.StoragePath, opt
 	}, nil
 }
 
-func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...types.PutOption) (types.UploadID, error) {
+func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...storage.PutOption) (storage.UploadID, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return "", err
 	}
@@ -434,20 +438,20 @@ func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, 
 	if err != nil {
 		return "", err
 	}
-	return types.UploadID(id), nil
+	return storage.UploadID(id), nil
 }
 
-func (d *Driver) UploadPart(ctx context.Context, bucket, key string, id types.UploadID, partNum int, r io.Reader, size int64) (*types.PartInfo, error) {
+func (d *Driver) UploadPart(ctx context.Context, bucket, key string, id storage.UploadID, partNum int, r io.Reader, size int64) (*storage.PartInfo, error) {
 	l := d.lock(bucket)
 	l.Lock()
 	defer l.Unlock()
 	if err := d.mp.WritePart(string(id), partNum, r, size); err != nil {
 		return nil, err
 	}
-	return &types.PartInfo{PartNumber: partNum, ETag: fmt.Sprintf("part-%d", partNum), Size: size}, nil
+	return &storage.PartInfo{PartNumber: partNum, ETag: fmt.Sprintf("part-%d", partNum), Size: size}, nil
 }
 
-func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key string, id types.UploadID, parts []types.PartInfo) (*types.ObjectMeta, error) {
+func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key string, id storage.UploadID, parts []storage.PartInfo) (*storage.ObjectMeta, error) {
 	if err := internal.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -497,7 +501,7 @@ func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key string
 	if err := writeMeta(d.baseDir, bucket, key, meta); err != nil {
 		return nil, err
 	}
-	return &types.ObjectMeta{
+	return &storage.ObjectMeta{
 		Path:         d.NewPath(bucket, key),
 		Size:         meta.Size,
 		ETag:         meta.ETag,
@@ -505,7 +509,7 @@ func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key string
 	}, nil
 }
 
-func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key string, id types.UploadID) error {
+func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key string, id storage.UploadID) error {
 	l := d.lock(bucket)
 	l.Lock()
 	defer l.Unlock()
