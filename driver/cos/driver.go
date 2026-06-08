@@ -11,14 +11,14 @@ import (
 
 	"github.com/tencentyun/cos-go-sdk-v5"
 
-	"github.com/insmtx/storage-go/driver/internal"
-	"github.com/insmtx/storage-go/driver/registry"
+	"github.com/insmtx/storage-go/driver/internal/pathcheck"
+
 	"github.com/insmtx/storage-go"
 )
 
-func init() {
-	registry.Register("cos", New)
-}
+const DriverName = "cos"
+
+func init() { storage.Register(DriverName, New) }
 
 // Config COS driver 配置。Endpoint 是带 bucket 的访问地址，
 // 例如 https://examplebucket-1250000000.cos.ap-shanghai.myqcloud.com 。
@@ -26,6 +26,7 @@ type Config struct {
 	Endpoint     string
 	AccessKey    string
 	SecretKey    string
+	HTTPBaseURL  string
 	PublicDomain string
 }
 
@@ -33,6 +34,8 @@ type Driver struct {
 	httpClient *http.Client
 	cfg        Config
 }
+
+var _ storage.Storage = (*Driver)(nil)
 
 // New 创建 COS driver。
 //
@@ -44,7 +47,8 @@ func New(cfg storage.Config) (storage.Storage, error) {
 		Endpoint:     cfg.Endpoint,
 		AccessKey:    cfg.AccessKey,
 		SecretKey:    cfg.SecretKey,
-		PublicDomain: cfg.PublicDomain,
+		HTTPBaseURL:  cfg.HTTPBaseURL,
+		PublicDomain: cfg.HTTPBaseURL,
 	}
 	if dCfg.Endpoint == "" || dCfg.AccessKey == "" {
 		return nil, fmt.Errorf("%w: Endpoint and AccessKey are required", storage.ErrInvalidConfig)
@@ -61,11 +65,8 @@ func New(cfg storage.Config) (storage.Storage, error) {
 	return &Driver{httpClient: hc, cfg: dCfg}, nil
 }
 
-// client 返回一个绑定到指定 bucket 的 COS client。
-// COS SDK 的 client 是 bucket 绑定的且无锁保护（BaseURL 字段），因此
-// 不能共享给并发操作；每次操作构造一个新 client 副本。
 func (d *Driver) client(bucket string) (*cos.Client, error) {
-	if err := internal.ValidateBucket(bucket); err != nil {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
 	u, err := url.Parse(d.cfg.Endpoint)
@@ -79,15 +80,17 @@ func (d *Driver) client(bucket string) (*cos.Client, error) {
 
 func (d *Driver) Close() error { return nil }
 
-func (d *Driver) NewPath(bucket, key string) storage.StoragePath {
-	return &s3Path{bucket: bucket, key: key, baseURL: d.cfg.PublicDomain}
+func (d *Driver) newPath(bucket, key string) storage.StoragePath {
+	return storage.NewS3Path(bucket, key, d.cfg.PublicDomain)
 }
 
-func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...storage.PutOption) (*storage.ObjectMeta, error) {
-	if err := internal.ValidateBucket(bucket); err != nil {
+// ---------- Core ----------
+
+func (d *Driver) PutObject(ctx context.Context, bucket, key string, body io.Reader, opts ...storage.PutOption) (*storage.PutObjectResult, error) {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
-	if err := internal.ValidateKey(key); err != nil {
+	if err := pathcheck.ValidateKey(key); err != nil {
 		return nil, err
 	}
 	c, err := d.client(bucket)
@@ -100,11 +103,10 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader,
 	}
 	opt := &cos.ObjectPutOptions{
 		ObjectPutHeaderOptions: &cos.ObjectPutHeaderOptions{
-			ContentType:   o.ContentType,
-			ContentLength: size,
+			ContentType: o.ContentType,
 		},
 	}
-	resp, err := c.Object.Put(ctx, key, r, opt)
+	resp, err := c.Object.Put(ctx, key, body, opt)
 	if err != nil {
 		return nil, wrapCosErr(err)
 	}
@@ -112,19 +114,17 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, r io.Reader,
 	if resp != nil {
 		etag = resp.Header.Get("ETag")
 	}
-	return &storage.ObjectMeta{
-		Path:        d.NewPath(bucket, key),
-		Size:        size,
-		ETag:        etag,
-		ContentType: o.ContentType,
+	return &storage.PutObjectResult{
+		Path: d.newPath(bucket, key),
+		ETag: etag,
 	}, nil
 }
 
-func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...storage.GetOption) (*storage.Object, error) {
-	if err := internal.ValidateBucket(bucket); err != nil {
+func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...storage.GetOption) (*storage.GetObjectResult, error) {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
-	if err := internal.ValidateKey(key); err != nil {
+	if err := pathcheck.ValidateKey(key); err != nil {
 		return nil, err
 	}
 	c, err := d.client(bucket)
@@ -135,65 +135,31 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...stor
 	for _, opt := range opts {
 		opt(o)
 	}
-	opt := &cos.ObjectGetOptions{}
+	cosOpts := &cos.ObjectGetOptions{}
 	if o.ByteRange != nil {
-		opt.Range = fmt.Sprintf("bytes=%d-%d", o.ByteRange.Start, o.ByteRange.End)
+		cosOpts.Range = fmt.Sprintf("bytes=%d-%d", o.ByteRange.Start, o.ByteRange.End)
 	}
-	resp, err := c.Object.Get(ctx, key, opt)
+	resp, err := c.Object.Get(ctx, key, cosOpts)
 	if err != nil {
 		return nil, wrapCosErr(err)
 	}
 	if resp == nil {
 		return nil, fmt.Errorf("%w: nil response from cos", storage.ErrNotFound)
 	}
-	contentType := resp.Header.Get("Content-Type")
-	etag := resp.Header.Get("ETag")
-	return &storage.Object{
-		ObjectMeta: storage.ObjectMeta{
-			Path:        d.NewPath(bucket, key),
-			Size:        resp.ContentLength,
-			ETag:        etag,
-			ContentType: contentType,
-		},
-		Body: resp.Body,
+	return &storage.GetObjectResult{
+		Path:          d.newPath(bucket, key),
+		ContentType:   resp.Header.Get("Content-Type"),
+		ContentLength: resp.ContentLength,
+		ETag:          resp.Header.Get("ETag"),
+		Body:          resp.Body,
 	}, nil
 }
 
-func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*storage.ObjectMeta, error) {
-	if err := internal.ValidateBucket(bucket); err != nil {
-		return nil, err
-	}
-	if err := internal.ValidateKey(key); err != nil {
-		return nil, err
-	}
-	c, err := d.client(bucket)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.Object.Head(ctx, key, nil)
-	if err != nil {
-		return nil, wrapCosErr(err)
-	}
-	if resp == nil {
-		return nil, fmt.Errorf("%w: nil response from cos", storage.ErrNotFound)
-	}
-	m := &storage.ObjectMeta{
-		Path:        d.NewPath(bucket, key),
-		Size:        resp.ContentLength,
-		ETag:        resp.Header.Get("ETag"),
-		ContentType: resp.Header.Get("Content-Type"),
-	}
-	if lm, err := http.ParseTime(resp.Header.Get("Last-Modified")); err == nil {
-		m.LastModified = lm
-	}
-	return m, nil
-}
-
 func (d *Driver) DeleteObject(ctx context.Context, bucket, key string) error {
-	if err := internal.ValidateBucket(bucket); err != nil {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return err
 	}
-	if err := internal.ValidateKey(key); err != nil {
+	if err := pathcheck.ValidateKey(key); err != nil {
 		return err
 	}
 	c, err := d.client(bucket)
@@ -205,7 +171,7 @@ func (d *Driver) DeleteObject(ctx context.Context, bucket, key string) error {
 }
 
 func (d *Driver) DeleteObjects(ctx context.Context, bucket string, keys []string) error {
-	if err := internal.ValidateBucket(bucket); err != nil {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return err
 	}
 	if len(keys) == 0 {
@@ -213,7 +179,7 @@ func (d *Driver) DeleteObjects(ctx context.Context, bucket string, keys []string
 	}
 	objs := make([]cos.Object, 0, len(keys))
 	for _, k := range keys {
-		if err := internal.ValidateKey(k); err != nil {
+		if err := pathcheck.ValidateKey(k); err != nil {
 			return err
 		}
 		objs = append(objs, cos.Object{Key: k})
@@ -222,9 +188,7 @@ func (d *Driver) DeleteObjects(ctx context.Context, bucket string, keys []string
 	if err != nil {
 		return err
 	}
-	res, _, err := c.Object.DeleteMulti(ctx, &cos.ObjectDeleteMultiOptions{
-		Objects: objs,
-	})
+	res, _, err := c.Object.DeleteMulti(ctx, &cos.ObjectDeleteMultiOptions{Objects: objs})
 	if err != nil {
 		return wrapCosErr(err)
 	}
@@ -238,53 +202,8 @@ func (d *Driver) DeleteObjects(ctx context.Context, bucket string, keys []string
 	return nil
 }
 
-func (d *Driver) CopyObject(ctx context.Context, src, dst storage.StoragePath, opts ...storage.CopyOption) (*storage.ObjectMeta, error) {
-	sp, ok := src.(*s3Path)
-	if !ok {
-		return nil, fmt.Errorf("%w: src path is not cos", storage.ErrInvalidPath)
-	}
-	dp, ok := dst.(*s3Path)
-	if !ok {
-		return nil, fmt.Errorf("%w: dst path is not cos", storage.ErrInvalidPath)
-	}
-	if err := internal.ValidateBucket(sp.bucket); err != nil {
-		return nil, err
-	}
-	if err := internal.ValidateBucket(dp.bucket); err != nil {
-		return nil, err
-	}
-	if err := internal.ValidateKey(sp.key); err != nil {
-		return nil, err
-	}
-	if err := internal.ValidateKey(dp.key); err != nil {
-		return nil, err
-	}
-	c, err := d.client(dp.bucket)
-	if err != nil {
-		return nil, err
-	}
-	o := &storage.CopyOptions{}
-	for _, opt := range opts {
-		opt(o)
-	}
-	srcURL := sp.bucket + "/" + sp.key
-	copyOpt := &cos.ObjectCopyOptions{
-		ObjectCopyHeaderOptions: &cos.ObjectCopyHeaderOptions{
-			XCosCopySource: srcURL,
-		},
-	}
-	if o.MetaReplace {
-		copyOpt.XCosMetadataDirective = "REPLACE"
-	}
-	_, _, err = c.Object.Copy(ctx, dp.key, srcURL, copyOpt)
-	if err != nil {
-		return nil, wrapCosErr(err)
-	}
-	return d.HeadObject(ctx, dp.bucket, dp.key)
-}
-
-func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (*storage.ListResult, error) {
-	if err := internal.ValidateBucket(bucket); err != nil {
+func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (*storage.ListObjectsOutput, error) {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
 	c, err := d.client(bucket)
@@ -295,26 +214,27 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 	for _, opt := range opts {
 		opt(o)
 	}
-	if prefix == "" {
-		prefix = o.Prefix
+	cosOpts := &cos.BucketGetOptions{
+		Prefix:      prefix,
+		MaxKeys:     int(o.MaxKeys),
+		Marker:      o.StartAfter,
 	}
-	opt2 := &cos.BucketGetOptions{
-		Prefix:    prefix,
-		MaxKeys:   o.MaxKeys,
-		Marker:    o.StartAfter,
-		Delimiter: o.Delimiter,
+	if o.Recursive {
+		cosOpts.Delimiter = ""
+	} else {
+		cosOpts.Delimiter = "/"
 	}
-	res, _, err := c.Bucket.Get(ctx, opt2)
+	res, _, err := c.Bucket.Get(ctx, cosOpts)
 	if err != nil {
 		return nil, wrapCosErr(err)
 	}
-	objs := make([]storage.ObjectMeta, 0, len(res.Contents))
+	contents := make([]storage.ObjectInfo, 0, len(res.Contents))
 	for _, obj := range res.Contents {
 		if obj.Key == "" {
 			continue
 		}
-		objs = append(objs, storage.ObjectMeta{
-			Path:         d.NewPath(bucket, obj.Key),
+		contents = append(contents, storage.ObjectInfo{
+			Path:         d.newPath(bucket, obj.Key),
 			Size:         obj.Size,
 			ETag:         obj.ETag,
 			LastModified: parseCosTime(obj.LastModified),
@@ -322,84 +242,24 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 	}
 	common := make([]string, 0, len(res.CommonPrefixes))
 	common = append(common, res.CommonPrefixes...)
-	return &storage.ListResult{
-		Objects:        objs,
+	out := &storage.ListObjectsOutput{
+		Contents:       contents,
 		CommonPrefixes: common,
-		NextToken:      res.NextMarker,
-		IsTruncated:    res.IsTruncated,
-	}, nil
+	}
+	if res.IsTruncated {
+		out.IsTruncated = true
+		out.NextContinuationToken = res.NextMarker
+	}
+	return out, nil
 }
 
-func (d *Driver) ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (storage.Pager[storage.ObjectMeta], error) {
-	r, err := d.ListObjects(ctx, bucket, prefix, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return &oneShotPager{result: r}, nil
-}
+// ---------- Multipart ----------
 
-type oneShotPager struct {
-	result *storage.ListResult
-	done   bool
-}
-
-func (p *oneShotPager) Next() ([]storage.ObjectMeta, error) {
-	if p.done {
-		return nil, io.EOF
-	}
-	p.done = true
-	return p.result.Objects, nil
-}
-func (p *oneShotPager) HasMore() bool { return !p.done }
-
-func (d *Driver) GetPublicURL(ctx context.Context, p storage.StoragePath) (string, error) {
-	if d.cfg.PublicDomain == "" {
-		return "", fmt.Errorf("%w: PublicDomain is required for GetPublicURL", storage.ErrInvalidConfig)
-	}
-	return p.URL(), nil
-}
-
-func (d *Driver) PresignGet(ctx context.Context, bucket, key string, expire time.Duration) (string, error) {
-	if err := internal.ValidateBucket(bucket); err != nil {
+func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...storage.PutOption) (string, error) {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return "", err
 	}
-	if err := internal.ValidateKey(key); err != nil {
-		return "", err
-	}
-	c, err := d.client(bucket)
-	if err != nil {
-		return "", err
-	}
-	u, err := c.Object.GetPresignedURL(ctx, http.MethodGet, key, d.cfg.AccessKey, d.cfg.SecretKey, expire, nil)
-	if err != nil {
-		return "", wrapCosErr(err)
-	}
-	return u.String(), nil
-}
-
-func (d *Driver) PresignPut(ctx context.Context, bucket, key string, expire time.Duration) (string, error) {
-	if err := internal.ValidateBucket(bucket); err != nil {
-		return "", err
-	}
-	if err := internal.ValidateKey(key); err != nil {
-		return "", err
-	}
-	c, err := d.client(bucket)
-	if err != nil {
-		return "", err
-	}
-	u, err := c.Object.GetPresignedURL(ctx, http.MethodPut, key, d.cfg.AccessKey, d.cfg.SecretKey, expire, nil)
-	if err != nil {
-		return "", wrapCosErr(err)
-	}
-	return u.String(), nil
-}
-
-func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...storage.PutOption) (storage.UploadID, error) {
-	if err := internal.ValidateBucket(bucket); err != nil {
-		return "", err
-	}
-	if err := internal.ValidateKey(key); err != nil {
+	if err := pathcheck.ValidateKey(key); err != nil {
 		return "", err
 	}
 	c, err := d.client(bucket)
@@ -417,24 +277,22 @@ func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, 
 	if err != nil {
 		return "", wrapCosErr(err)
 	}
-	return storage.UploadID(res.UploadID), nil
+	return res.UploadID, nil
 }
 
-func (d *Driver) UploadPart(ctx context.Context, bucket, key string, id storage.UploadID, partNum int, r io.Reader, size int64) (*storage.PartInfo, error) {
-	if err := internal.ValidateBucket(bucket); err != nil {
+func (d *Driver) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, body io.Reader) (*storage.CompletedPart, error) {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
-	if err := internal.ValidateKey(key); err != nil {
+	if err := pathcheck.ValidateKey(key); err != nil {
 		return nil, err
 	}
 	c, err := d.client(bucket)
 	if err != nil {
 		return nil, err
 	}
-	opt := &cos.ObjectUploadPartOptions{
-		ContentLength: size,
-	}
-	resp, err := c.Object.UploadPart(ctx, key, string(id), partNum, r, opt)
+	opt := &cos.ObjectUploadPartOptions{}
+	resp, err := c.Object.UploadPart(ctx, key, uploadID, partNumber, body, opt)
 	if err != nil {
 		return nil, wrapCosErr(err)
 	}
@@ -442,53 +300,144 @@ func (d *Driver) UploadPart(ctx context.Context, bucket, key string, id storage.
 	if resp != nil {
 		etag = resp.Header.Get("ETag")
 	}
-	return &storage.PartInfo{
-		PartNumber: partNum,
-		ETag:       etag,
-		Size:       size,
-	}, nil
+	return &storage.CompletedPart{PartNumber: partNumber, ETag: etag}, nil
 }
 
-func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key string, id storage.UploadID, parts []storage.PartInfo) (*storage.ObjectMeta, error) {
-	if err := internal.ValidateBucket(bucket); err != nil {
-		return nil, err
+func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []storage.CompletedPart) error {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
+		return err
 	}
-	if err := internal.ValidateKey(key); err != nil {
-		return nil, err
+	if err := pathcheck.ValidateKey(key); err != nil {
+		return err
 	}
 	c, err := d.client(bucket)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	uparts := make([]cos.Object, len(parts))
 	for i, p := range parts {
-		uparts[i] = cos.Object{
-			PartNumber: p.PartNumber,
-			ETag:       p.ETag,
-		}
+		uparts[i] = cos.Object{PartNumber: p.PartNumber, ETag: p.ETag}
 	}
-	opt := &cos.CompleteMultipartUploadOptions{
-		Parts: uparts,
-	}
-	if _, _, err := c.Object.CompleteMultipartUpload(ctx, key, string(id), opt); err != nil {
-		return nil, wrapCosErr(err)
-	}
-	return d.HeadObject(ctx, bucket, key)
+	opt := &cos.CompleteMultipartUploadOptions{Parts: uparts}
+	_, _, err = c.Object.CompleteMultipartUpload(ctx, key, uploadID, opt)
+	return wrapCosErr(err)
 }
 
-func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key string, id storage.UploadID) error {
-	if err := internal.ValidateBucket(bucket); err != nil {
+func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return err
 	}
-	if err := internal.ValidateKey(key); err != nil {
+	if err := pathcheck.ValidateKey(key); err != nil {
 		return err
 	}
 	c, err := d.client(bucket)
 	if err != nil {
 		return err
 	}
-	_, err = c.Object.AbortMultipartUpload(ctx, key, string(id))
+	_, err = c.Object.AbortMultipartUpload(ctx, key, uploadID)
 	return wrapCosErr(err)
+}
+
+// ---------- Ext ----------
+
+func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*storage.ObjectInfo, error) {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
+		return nil, err
+	}
+	if err := pathcheck.ValidateKey(key); err != nil {
+		return nil, err
+	}
+	c, err := d.client(bucket)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.Object.Head(ctx, key, nil)
+	if err != nil {
+		return nil, wrapCosErr(err)
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("%w: nil response from cos", storage.ErrNotFound)
+	}
+	m := &storage.ObjectInfo{
+		Path:        d.newPath(bucket, key),
+		Size:        resp.ContentLength,
+		ETag:        resp.Header.Get("ETag"),
+		ContentType: resp.Header.Get("Content-Type"),
+	}
+	if lm, err := http.ParseTime(resp.Header.Get("Last-Modified")); err == nil {
+		m.LastModified = lm
+	}
+	return m, nil
+}
+
+func (d *Driver) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string) error {
+	if err := pathcheck.ValidateBucket(srcBucket); err != nil {
+		return err
+	}
+	if err := pathcheck.ValidateBucket(dstBucket); err != nil {
+		return err
+	}
+	if err := pathcheck.ValidateKey(srcKey); err != nil {
+		return err
+	}
+	if err := pathcheck.ValidateKey(dstKey); err != nil {
+		return err
+	}
+	c, err := d.client(dstBucket)
+	if err != nil {
+		return err
+	}
+	srcURL := srcBucket + "/" + srcKey
+	copyOpt := &cos.ObjectCopyOptions{
+		ObjectCopyHeaderOptions: &cos.ObjectCopyHeaderOptions{
+			XCosCopySource: srcURL,
+		},
+	}
+	_, _, err = c.Object.Copy(ctx, dstKey, srcURL, copyOpt)
+	return wrapCosErr(err)
+}
+
+func (d *Driver) PresignGetObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...storage.GetOption) (string, error) {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
+		return "", err
+	}
+	if err := pathcheck.ValidateKey(key); err != nil {
+		return "", err
+	}
+	c, err := d.client(bucket)
+	if err != nil {
+		return "", err
+	}
+	u, err := c.Object.GetPresignedURL(ctx, http.MethodGet, key, d.cfg.AccessKey, d.cfg.SecretKey, ttl, nil)
+	if err != nil {
+		return "", wrapCosErr(err)
+	}
+	return u.String(), nil
+}
+
+func (d *Driver) PresignPutObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...storage.PutOption) (string, error) {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
+		return "", err
+	}
+	if err := pathcheck.ValidateKey(key); err != nil {
+		return "", err
+	}
+	c, err := d.client(bucket)
+	if err != nil {
+		return "", err
+	}
+	u, err := c.Object.GetPresignedURL(ctx, http.MethodPut, key, d.cfg.AccessKey, d.cfg.SecretKey, ttl, nil)
+	if err != nil {
+		return "", wrapCosErr(err)
+	}
+	return u.String(), nil
+}
+
+func (d *Driver) GetPublicURL(ctx context.Context, bucket, key string) (string, error) {
+	if d.cfg.PublicDomain == "" {
+		return "", fmt.Errorf("%w: HTTPBaseURL is required for GetPublicURL", storage.ErrInvalidConfig)
+	}
+	return d.newPath(bucket, key).PublicURL(), nil
 }
 
 // wrapCosErr 将 cos SDK 错误映射到 storage 的 sentinel error。
@@ -507,7 +456,6 @@ func wrapCosErr(err error) error {
 			return fmt.Errorf("%w: %s", storage.ErrAlreadyExists, resp.Message)
 		}
 	}
-	// 通过 HTTP 状态码 fallback
 	msg := err.Error()
 	if strings.Contains(msg, "404") {
 		return fmt.Errorf("%w: %s", storage.ErrNotFound, msg)
@@ -518,9 +466,6 @@ func wrapCosErr(err error) error {
 	return err
 }
 
-var _ storage.Storage = (*Driver)(nil)
-
-// parseCosTime 解析 cos API 返回的时间字符串（ISO8601 / RFC1123）。
 func parseCosTime(s string) time.Time {
 	if s == "" {
 		return time.Time{}

@@ -6,41 +6,36 @@ import (
 	"time"
 )
 
-type ObjectReader interface {
-	GetObject(ctx context.Context, bucket, key string, opts ...GetOption) (*Object, error)
-	HeadObject(ctx context.Context, bucket, key string) (*ObjectMeta, error)
-}
-
-type ObjectWriter interface {
-	PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...PutOption) (*ObjectMeta, error)
+// Core 常用操作，覆盖 90% 的 CRUD/列举场景。
+type Core interface {
+	PutObject(ctx context.Context, bucket, key string, body io.Reader, opts ...PutOption) (*PutObjectResult, error)
+	GetObject(ctx context.Context, bucket, key string, opts ...GetOption) (*GetObjectResult, error)
 	DeleteObject(ctx context.Context, bucket, key string) error
 	DeleteObjects(ctx context.Context, bucket string, keys []string) error
-	CopyObject(ctx context.Context, src, dst StoragePath, opts ...CopyOption) (*ObjectMeta, error)
+	ListObjects(ctx context.Context, bucket, prefix string, opts ...ListOption) (*ListObjectsOutput, error)
 }
 
-type ObjectLister interface {
-	ListObjects(ctx context.Context, bucket, prefix string, opts ...ListOption) (*ListResult, error)
-	ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...ListOption) (Pager[ObjectMeta], error)
+// Multipart 分片上传，独立成簇便于按需 mock 与替换。
+type Multipart interface {
+	CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...PutOption) (string, error)
+	UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, body io.Reader) (*CompletedPart, error)
+	CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []CompletedPart) error
+	AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error
 }
 
-type URLBuilder interface {
-	GetPublicURL(ctx context.Context, path StoragePath) (string, error)
-	PresignGet(ctx context.Context, bucket, key string, expire time.Duration) (string, error)
-	PresignPut(ctx context.Context, bucket, key string, expire time.Duration) (string, error)
+// Ext 不常用或场景特殊的操作，driver 对不支持的方法可返回 ErrNotSupported。
+type Ext interface {
+	HeadObject(ctx context.Context, bucket, key string) (*ObjectInfo, error)
+	CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string) error
+	PresignGetObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...GetOption) (string, error)
+	PresignPutObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...PutOption) (string, error)
+	GetPublicURL(ctx context.Context, bucket, key string) (string, error)
+	Close() error
 }
 
-type MultipartUploader interface {
-	CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...PutOption) (UploadID, error)
-	UploadPart(ctx context.Context, bucket, key string, id UploadID, partNum int, r io.Reader, size int64) (*PartInfo, error)
-	CompleteMultipartUpload(ctx context.Context, bucket, key string, id UploadID, parts []PartInfo) (*ObjectMeta, error)
-	AbortMultipartUpload(ctx context.Context, bucket, key string, id UploadID) error
-}
-
+// Storage 由 Core / Multipart / Ext 组合而成。
 type Storage interface {
-	ObjectReader
-	ObjectWriter
-	ObjectLister
-	URLBuilder
-	MultipartUploader
-	io.Closer
+	Core
+	Multipart
+	Ext
 }

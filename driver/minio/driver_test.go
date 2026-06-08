@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/insmtx/storage-go"
-	"github.com/insmtx/storage-go/driver/storagetest"
+	"github.com/insmtx/storage-go/testkit"
 )
 
 func TestMinioIntegration(t *testing.T) {
@@ -23,5 +23,5 @@ func TestMinioIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	storagetest.RunSuite(t, d, "test-bucket")
+	testkit.RunSuite(t, d, "test-bucket")
 }

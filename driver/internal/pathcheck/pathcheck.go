@@ -1,4 +1,5 @@
-package internal
+// Package pathcheck 提供 bucket 与 object key 的命名校验。
+package pathcheck
 
 import (
 	"fmt"
@@ -8,10 +9,9 @@ import (
 	"github.com/insmtx/storage-go"
 )
 
-// S3 bucket 命名规则：小写字母、数字、连字符；3-63 字符；首尾必须字母数字
 var bucketRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`)
 
-// ValidateBucket 校验 bucket 名称。
+// ValidateBucket 校验 bucket 名称（S3 命名规则）。
 func ValidateBucket(bucket string) error {
 	if bucket == "" {
 		return fmt.Errorf("%w: bucket is empty", storage.ErrInvalidPath)

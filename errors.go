@@ -5,7 +5,7 @@ import "errors"
 var (
 	ErrNotFound         = errors.New("storage: object not found")
 	ErrAlreadyExists    = errors.New("storage: object already exists")
-	ErrNotSupported     = errors.New("storage: operation not supported by this driver")
+	ErrNotSupported = errors.New("storage: operation not supported")
 	ErrInvalidPath      = errors.New("storage: invalid storage path")
 	ErrInvalidConfig    = errors.New("storage: invalid config")
 	ErrPermission       = errors.New("storage: permission denied")

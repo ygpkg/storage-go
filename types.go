@@ -6,44 +6,52 @@ import (
 	"time"
 )
 
-type ObjectMeta struct {
+// PutObjectResult 单次上传结果。
+type PutObjectResult struct {
+	Path StoragePath
+	ETag string
+}
+
+// GetObjectResult 下载结果，Body 由调用方负责 Close。
+type GetObjectResult struct {
+	Body          io.ReadCloser
+	Path          StoragePath
+	ContentType   string
+	ContentLength int64
+	ETag          string
+}
+
+// ObjectInfo 对象元数据。
+type ObjectInfo struct {
 	Path         StoragePath
 	Size         int64
 	ETag         string
 	ContentType  string
 	LastModified time.Time
-	UserMeta     map[string]string
+	Metadata     map[string]string
 }
 
-type Object struct {
-	ObjectMeta
-	Body io.ReadCloser
+// ListObjectsOutput ListObjects 单次调用结果。
+// 分页用 NextContinuationToken 配合 NewListObjectsPaginator 迭代。
+type ListObjectsOutput struct {
+	Contents             []ObjectInfo
+	CommonPrefixes       []string
+	IsTruncated          bool
+	NextContinuationToken string
 }
 
-type ListResult struct {
-	Objects        []ObjectMeta
-	CommonPrefixes []string
-	NextToken      string
-	IsTruncated    bool
-}
-
-type Pager[T any] interface {
-	Next() ([]T, error)
-	HasMore() bool
-}
-
-type UploadID string
-
-type PartInfo struct {
+// CompletedPart 分片上传单个分片结果。
+type CompletedPart struct {
 	PartNumber int
 	ETag       string
-	Size       int64
 }
 
+// BulkDeleteError DeleteObjects 部分失败时的聚合错误。
 type BulkDeleteError struct {
 	Failures []DeleteFailure
 }
 
+// DeleteFailure 单个 key 删除失败详情。
 type DeleteFailure struct {
 	Key string
 	Err error

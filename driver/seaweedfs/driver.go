@@ -1,4 +1,5 @@
-package minio
+// Package seaweedfs SeaweedFS S3 兼容 driver，基于 minio-go SDK。
+package seaweedfs
 
 import (
 	"context"
@@ -16,7 +17,7 @@ import (
 	"github.com/insmtx/storage-go"
 )
 
-const DriverName = "minio"
+const DriverName = "seaweedfs"
 
 func init() { storage.Register(DriverName, New) }
 
@@ -42,7 +43,7 @@ func New(cfg storage.Config) (storage.Storage, error) {
 		AccessKey:    cfg.AccessKey,
 		SecretKey:    cfg.SecretKey,
 		UseSSL:       cfg.UseSSL,
-		PublicDomain: cfg.HTTPBaseURL, // MinIO public domain 同 local HTTPBaseURL 槽位
+		PublicDomain: cfg.HTTPBaseURL,
 	}
 	client, core, err := s3base.NewMinioClient(dCfg)
 	if err != nil {
@@ -167,9 +168,9 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 		opt(o)
 	}
 	res := d.client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
-		Prefix:    prefix,
-		Recursive: o.Recursive,
-		MaxKeys:   int(o.MaxKeys),
+		Prefix:     prefix,
+		Recursive:  o.Recursive,
+		MaxKeys:    int(o.MaxKeys),
 		StartAfter: o.StartAfter,
 	})
 	var contents []storage.ObjectInfo
@@ -192,11 +193,10 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 			LastModified: obj.LastModified,
 		})
 	}
-	out := &storage.ListObjectsOutput{
+	return &storage.ListObjectsOutput{
 		Contents:       contents,
 		CommonPrefixes: common,
-	}
-	return out, nil
+	}, nil
 }
 
 // ---------- Multipart ----------
@@ -212,9 +212,7 @@ func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, 
 	for _, opt := range opts {
 		opt(o)
 	}
-	uid, err := d.core.NewMultipartUpload(ctx, bucket, key, minio.PutObjectOptions{
-		ContentType: o.ContentType,
-	})
+	uid, err := d.core.NewMultipartUpload(ctx, bucket, key, minio.PutObjectOptions{ContentType: o.ContentType})
 	if err != nil {
 		return "", s3base.WrapMinioErr(err)
 	}
@@ -337,5 +335,4 @@ func (d *Driver) GetPublicURL(ctx context.Context, bucket, key string) (string, 
 	return d.newPath(bucket, key).PublicURL(), nil
 }
 
-// 防止 unused import 报错
 var _ = errors.New

@@ -12,7 +12,7 @@ func TestSentinelErrors(t *testing.T) {
 	}{
 		{ErrNotFound, "storage: object not found"},
 		{ErrAlreadyExists, "storage: object already exists"},
-		{ErrNotSupported, "storage: operation not supported by this driver"},
+		{ErrNotSupported, "storage: operation not supported"},
 		{ErrInvalidPath, "storage: invalid storage path"},
 		{ErrInvalidConfig, "storage: invalid config"},
 		{ErrPermission, "storage: permission denied"},

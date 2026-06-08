@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/insmtx/storage-go"
-	"github.com/insmtx/storage-go/driver/storagetest"
+	"github.com/insmtx/storage-go/testkit"
 )
 
 func TestCosIntegration(t *testing.T) {
@@ -22,5 +22,5 @@ func TestCosIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	storagetest.RunSuite(t, d, "test-bucket")
+	testkit.RunSuite(t, d, "test-bucket")
 }

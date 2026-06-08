@@ -3,86 +3,72 @@ package storage_test
 import (
 	"context"
 	"io"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/insmtx/storage-go"
-	"github.com/insmtx/storage-go/driver/registry"
 )
 
 type testStorage struct{}
 
-func (s *testStorage) GetObject(ctx context.Context, bucket, key string, opts ...storage.GetOption) (*storage.Object, error) {
-	return nil, nil
+func (s *testStorage) PutObject(ctx context.Context, bucket, key string, body io.Reader, opts ...storage.PutOption) (*storage.PutObjectResult, error) {
+	return &storage.PutObjectResult{Path: storage.NewS3Path(bucket, key, ""), ETag: "fake"}, nil
 }
-func (s *testStorage) HeadObject(ctx context.Context, bucket, key string) (*storage.ObjectMeta, error) {
-	return nil, nil
-}
-func (s *testStorage) PutObject(ctx context.Context, bucket, key string, r io.Reader, size int64, opts ...storage.PutOption) (*storage.ObjectMeta, error) {
-	return nil, nil
+func (s *testStorage) GetObject(ctx context.Context, bucket, key string, opts ...storage.GetOption) (*storage.GetObjectResult, error) {
+	return &storage.GetObjectResult{Body: io.NopCloser(nil), Path: storage.NewS3Path(bucket, key, "")}, nil
 }
 func (s *testStorage) DeleteObject(ctx context.Context, bucket, key string) error { return nil }
 func (s *testStorage) DeleteObjects(ctx context.Context, bucket string, keys []string) error {
 	return nil
 }
-func (s *testStorage) CopyObject(ctx context.Context, src, dst storage.StoragePath, opts ...storage.CopyOption) (*storage.ObjectMeta, error) {
-	return nil, nil
+func (s *testStorage) ListObjects(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (*storage.ListObjectsOutput, error) {
+	return &storage.ListObjectsOutput{}, nil
 }
-func (s *testStorage) ListObjects(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (*storage.ListResult, error) {
-	return nil, nil
+func (s *testStorage) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...storage.PutOption) (string, error) {
+	return "id", nil
 }
-func (s *testStorage) ListObjectsPage(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (storage.Pager[storage.ObjectMeta], error) {
-	return nil, nil
+func (s *testStorage) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, body io.Reader) (*storage.CompletedPart, error) {
+	return &storage.CompletedPart{PartNumber: partNumber, ETag: "fake"}, nil
 }
-func (s *testStorage) GetPublicURL(ctx context.Context, path storage.StoragePath) (string, error) {
-	return "", nil
-}
-func (s *testStorage) PresignGet(ctx context.Context, bucket, key string, expire time.Duration) (string, error) {
-	return "", nil
-}
-func (s *testStorage) PresignPut(ctx context.Context, bucket, key string, expire time.Duration) (string, error) {
-	return "", nil
-}
-func (s *testStorage) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...storage.PutOption) (storage.UploadID, error) {
-	return "", nil
-}
-func (s *testStorage) UploadPart(ctx context.Context, bucket, key string, id storage.UploadID, partNum int, r io.Reader, size int64) (*storage.PartInfo, error) {
-	return nil, nil
-}
-func (s *testStorage) CompleteMultipartUpload(ctx context.Context, bucket, key string, id storage.UploadID, parts []storage.PartInfo) (*storage.ObjectMeta, error) {
-	return nil, nil
-}
-func (s *testStorage) AbortMultipartUpload(ctx context.Context, bucket, key string, id storage.UploadID) error {
+func (s *testStorage) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []storage.CompletedPart) error {
 	return nil
+}
+func (s *testStorage) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	return nil
+}
+func (s *testStorage) HeadObject(ctx context.Context, bucket, key string) (*storage.ObjectInfo, error) {
+	return &storage.ObjectInfo{Path: storage.NewS3Path(bucket, key, "")}, nil
+}
+func (s *testStorage) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string) error {
+	return nil
+}
+func (s *testStorage) PresignGetObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...storage.GetOption) (string, error) {
+	return "", nil
+}
+func (s *testStorage) PresignPutObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...storage.PutOption) (string, error) {
+	return "", nil
+}
+func (s *testStorage) GetPublicURL(ctx context.Context, bucket, key string) (string, error) {
+	return "", nil
 }
 func (s *testStorage) Close() error { return nil }
 
-func TestMain(m *testing.M) {
-	code := m.Run()
-	registry.Reset()
-	os.Exit(code)
-}
-
-func TestGetUnregistered(t *testing.T) {
-	_, ok := registry.Get("does-not-exist")
-	if ok {
-		t.Error("Get should return false for unknown name")
+func TestNewUnregisteredDriver(t *testing.T) {
+	_, err := storage.New(storage.Config{Driver: "does-not-exist"})
+	if err == nil {
+		t.Fatal("expected error for unregistered driver")
+	}
+	if !errorsIs(err, storage.ErrInvalidConfig) {
+		t.Errorf("err = %v, want ErrInvalidConfig", err)
 	}
 }
 
-func TestGetRegistered(t *testing.T) {
-	defer registry.Reset()
-
-	registry.Register("test-factory", func(cfg storage.Config) (storage.Storage, error) {
+func TestNewRegisteredDriver(t *testing.T) {
+	storage.Register("test-factory", func(cfg storage.Config) (storage.Storage, error) {
 		return &testStorage{}, nil
 	})
 
-	f, ok := registry.Get("test-factory")
-	if !ok {
-		t.Fatal("Get should return true after Register")
-	}
-	s, err := f(storage.Config{})
+	s, err := storage.New(storage.Config{Driver: "test-factory"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,4 +76,20 @@ func TestGetRegistered(t *testing.T) {
 		t.Fatal("factory returned nil storage")
 	}
 	defer s.Close()
+}
+
+// errorsIs is a tiny shim to avoid importing "errors" in the test file header.
+func errorsIs(err, target error) bool {
+	for err != nil {
+		if err == target {
+			return true
+		}
+		type unwrapper interface{ Unwrap() error }
+		if u, ok := err.(unwrapper); ok {
+			err = u.Unwrap()
+		} else {
+			return false
+		}
+	}
+	return false
 }

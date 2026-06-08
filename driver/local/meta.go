@@ -16,7 +16,7 @@ type metaFile struct {
 	ETag         string            `json:"etag"`
 	ContentType  string            `json:"content_type"`
 	LastModified time.Time         `json:"last_modified"`
-	UserMeta     map[string]string `json:"user_meta,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
 func metaPath(baseDir, bucket, key string) string {

@@ -32,23 +32,23 @@ storage-go 是一个统一的对象存储抽象库，对外暴露一套与 S3 �
 ```
 storage-go/
 ├── interface.go         # 接口定义：Core / Multipart / Ext，由三者组合成 Storage
-├── path.go              # StoragePath interface 及 s3Path / localPath 实现
+├── path.go              # StoragePath interface 及 s3Path / localPath 实现 + NewS3Path / NewLocalPath 工厂
 ├── errors.go            # sentinel error
 ├── options.go           # PutOption / GetOption / ListOption / UploadOption
-├── types.go             # ObjectInfo / PutObjectResult / GetObjectResult 等
+├── types.go             # ObjectInfo / PutObjectResult / GetObjectResult / ListObjectsOutput 等
 ├── registry.go          # driver 注册表，Register() / open()
-├── client.go            # Client 结构体与高层封装（含 UploadObject）
+├── client.go            # Client 结构体与高层封装（含 UploadObject / ListPager）
 ├── config.go            # Config 定义与 New() 工厂
-│
+
 ├── driver/
-│   ├── minio/driver.go  # init() 中调用 storage.Register("minio", ...)
-│   ├── cos/driver.go
-│   ├── seaweedfs/driver.go
-│   └── local/driver.go
-│
-├── internal/
-│   └── retry/           # 通用重试逻辑
-│
+│   ├── minio/driver.go   # init() 中调用 storage.Register("minio", ...)
+│   ├── cos/driver.go     # COS wrapCosErr 留在包内
+│   ├── seaweedfs/driver.go # 独立 driver，通过 s3base 共享 minio-go SDK
+│   ├── local/driver.go   # sidecar 元数据（BaseDir/data + BaseDir/meta）
+│   └── internal/
+│       ├── s3base/        # ≥2 driver 共用的 S3 兼容逻辑（NewMinioClient / WrapMinioErr）
+│       └── pathcheck/     # 桶名 key 名校验
+
 └── testkit/
     ├── suite.go         # 通用 driver 测试套件
     └── mock_driver.go   # 内存 mock 实现
@@ -58,10 +58,11 @@ storage-go/
 
 | 包 | 允许 import | 禁止 import |
 | --- | --- | --- |
-| 根包（storage-go） | 标准库、internal/* | driver/*（driver 通过注册机制反向注入） |
-| driver/* | 根包（仅用于调用 Register）、各自 SDK、标准库 | 其他 driver |
-| internal/retry | 根包类型、标准库 | driver/* |
-| testkit | 根包、标准库、testify | driver/* |
+| 根包（storage-go） | 标准库、golang.org/x/sync | driver/*（driver 通过注册机制反向注入） |
+| driver/* | 根包（仅用于调用 Register）、各自 SDK、标准库、s3base/pathcheck | 其他 driver |
+| driver/internal/s3base | 根包类型、minio-go SDK、标准库 | driver/*（被 driver 引用，不反向引用） |
+| driver/internal/pathcheck | 根包类型、标准库 | driver/* |
+| testkit | 根包、标准库 | driver/* |
 
 ### 2.3 driver 注册机制
 
@@ -99,7 +100,7 @@ type StoragePath interface {
 }
 ```
 
-说明：原 `Join(elem ...string) StoragePath` 已移除。路径拼接由调用方在 `bucket` 与 `key` 层面完成，driver 只负责将已组装好的 bucket/key 构造为 `StoragePath` 并返回。
+`NewS3Path(bucket, key, endpoint string) StoragePath` 和 `NewLocalPath(absDir, bucket, key, httpBase string) StoragePath` 是两个工厂函数，由根包统一导出，各 driver 直接调用，无需各自定义 path 类型。
 
 ### 3.2 路径视图汇总
 
@@ -125,14 +126,15 @@ type StoragePath interface {
 | GetObject | Core | GetObject | 下载，支持 Range |
 | DeleteObject | Core | DeleteObject | 单对象删除，幂等 |
 | DeleteObjects | Core | DeleteObjects | 批量删除，最多 1000 个 |
-| ListObjects | Core | ListObjectsV2 | 前缀列举，流式 channel 返回 |
+| ListObjects | Core | ListObjectsV2 | 前缀列举，返回 *ListObjectsOutput，配套 ListPager 分页 |
 | HeadObject | Ext | HeadObject | 获取元数据，不下载内容 |
 | CopyObject | Ext | CopyObject | 服务端复制 |
 | CreateMultipartUpload | Multipart | CreateMultipartUpload | 初始化分片上传 |
 | UploadPart | Multipart | UploadPart | 上传单个分片 |
 | CompleteMultipartUpload | Multipart | CompleteMultipartUpload | 合并分片完成上传 |
 | AbortMultipartUpload | Multipart | AbortMultipartUpload | 取消分片上传 |
-| GetPresignedURL | Ext | GetObject（presign） | 有时效的预签名下载 URL |
+| PresignGetObject | Ext | GetObject（presign） | 有时效的预签名下载 URL |
+| PresignPutObject | Ext | PutObject（presign） | 有时效的预签名上传 URL |
 | GetPublicURL | Ext | 无直接对应 | 永久公开访问 URL |
 | Close | Ext | — | 生命周期，收尾资源 |
 
@@ -151,13 +153,13 @@ type Core interface {
     GetObject(ctx, bucket, key string, opts ...GetOption) (*GetObjectResult, error)
     DeleteObject(ctx, bucket, key string) error
     DeleteObjects(ctx, bucket string, keys []string) error
-    ListObjects(ctx, bucket, prefix string, opts ...ListOption) (<-chan ListEntry, error)
+    ListObjects(ctx, bucket, prefix string, opts ...ListOption) (*ListObjectsOutput, error)
 }
 
 // 分片上传
 type Multipart interface {
     CreateMultipartUpload(ctx, bucket, key string, opts ...PutOption) (uploadID string, err error)
-    UploadPart(ctx, bucket, key, uploadID string, partNumber int, body io.Reader) (CompletedPart, error)
+    UploadPart(ctx, bucket, key, uploadID string, partNumber int, body io.Reader) (*CompletedPart, error)
     CompleteMultipartUpload(ctx, bucket, key, uploadID string, parts []CompletedPart) error
     AbortMultipartUpload(ctx, bucket, key, uploadID string) error
 }
@@ -166,7 +168,8 @@ type Multipart interface {
 type Ext interface {
     HeadObject(ctx, bucket, key string) (*ObjectInfo, error)
     CopyObject(ctx, srcBucket, srcKey, dstBucket, dstKey string) error
-    GetPresignedURL(ctx, bucket, key string, ttl time.Duration) (string, error)
+    PresignGetObject(ctx, bucket, key string, ttl time.Duration, opts ...GetOption) (string, error)
+    PresignPutObject(ctx, bucket, key string, ttl time.Duration, opts ...PutOption) (string, error)
     GetPublicURL(ctx, bucket, key string) (string, error)
     Close() error
 }
@@ -185,7 +188,7 @@ type Storage interface {
 | --- | --- |
 | 按需组合 | 测试时可只 mock 关心的子接口；轻量场景（如纯图片分发）可只实现 Core |
 | 关注点分离 | 分片逻辑与基础 CRUD 解耦，未来替换分片实现不影响 CRUD 路径 |
-| 不常用操作降级 | driver 对 Ext 中不支持的方法（如 Local 的 GetPresignedURL）可统一返回 `ErrNotSupported`，调用方按子接口判断 |
+| 不常用操作降级 | driver 对 Ext 中不支持的方法（如 Local 的 PresignGetObject / PresignPutObject）可统一返回 `ErrNotSupported`，调用方按子接口判断 |
 | 演进更稳 | 任何子接口新增方法只影响该子接口的实现者，不会扩散到所有 driver |
 
 ## 五、公共数据结构
@@ -215,9 +218,11 @@ type ObjectInfo struct {
     Metadata     map[string]string
 }
 
-type ListEntry struct {
-    Info ObjectInfo
-    Err  error // 非 nil 时表示列举出错，channel 随即关闭
+type ListObjectsOutput struct {
+    Contents              []ObjectInfo
+    CommonPrefixes        []string
+    IsTruncated           bool
+    NextContinuationToken string
 }
 
 type CompletedPart struct {
@@ -235,17 +240,20 @@ type DeleteFailure struct {
 }
 ```
 
+ListObjects 采用对齐 AWS SDK 的分页模型，不在接口内暴露 channel 流式。分页通过 `NewListObjectsPaginator(s Core, ...) (ListPager, error)` 迭代器提供，`ListPager` 接口包含 `HasMore() bool` 和 `NextPage(ctx) (*ListObjectsOutput, error)`。
+
 ## 六、错误处理
 
 ```go
 var (
-    ErrNotFound        = errors.New("storage: object not found")
-    ErrPermission      = errors.New("storage: permission denied")
-    ErrAlreadyExists   = errors.New("storage: object already exists")
-    ErrInvalidPath     = errors.New("storage: invalid path")
-    ErrQuotaExceeded   = errors.New("storage: quota exceeded")
-    ErrNotSupported    = errors.New("storage: operation not supported")
-    ErrCrossBackend    = errors.New("storage: cross-backend copy is not supported")
+    ErrNotFound         = errors.New("storage: object not found")
+    ErrPermission       = errors.New("storage: permission denied")
+    ErrAlreadyExists    = errors.New("storage: object already exists")
+    ErrInvalidPath      = errors.New("storage: invalid path")
+    ErrInvalidConfig    = errors.New("storage: invalid config")
+    ErrQuotaExceeded    = errors.New("storage: quota exceeded")
+    ErrNotSupported     = errors.New("storage: operation not supported")
+    ErrCrossBackend     = errors.New("storage: cross-backend copy is not supported")
     ErrMultipartAborted = errors.New("storage: multipart upload was aborted")
 )
 ```
@@ -301,21 +309,23 @@ WithPutOptions(opts ...PutOption) UploadOption
 
 ```go
 type Config struct {
-    Driver Driver // "minio" | "cos" | "seaweedfs" | "local"
+    Driver DriverType // "minio" | "cos" | "seaweedfs" | "local"
 
     // S3 兼容后端通用字段
-    Endpoint        string
-    Region          string
-    AccessKeyID     string
-    SecretAccessKey string
-    Bucket          string
-    UseSSL          bool
+    Endpoint     string
+    Region       string
+    AccessKey    string
+    SecretKey    string
+    Bucket       string
+    UseSSL       bool
 
     // 本地磁盘后端
-    RootDir     string // bucket 映射为一级子目录
+    RootDir     string // bucket 映射为 data/ 下的子目录
     HTTPBaseURL string // 配置后 GetPublicURL 返回 HTTP URL
 
-    MaxRetries int // 默认 3
+    MaxRetries   int           // 默认 3
+    Timeout      time.Duration
+    ExtraOptions map[string]string
 }
 ```
 
@@ -323,10 +333,10 @@ type Config struct {
 
 ### Client
 
-Client 将 Config.Bucket 注入，调用方只需提供 key，无需每次传入 bucket：
+NewClient(cfg) 等价 New(cfg) + 注入 cfg.Bucket。调用方通过 Client 只需提供 key，无需每次传入 bucket：
 
 ```go
-client, _ := storage.New(storage.Config{
+client, _ := storage.NewClient(storage.Config{
     Driver:   storage.DriverMinio,
     Endpoint: "https://s3.ap-northeast-1.amazonaws.com",
     Bucket:   "avatars",
@@ -388,22 +398,24 @@ Core / Multipart 子接口保持原子性（每个方法对应一次独立的存
 - 任何分片失败后，自动触发 `AbortMultipartUpload`，防止已上传分片持续计费
 - parts 按 `PartNumber` 升序排列后再调用 `CompleteMultipartUpload`
 
-## 十一、GetPublicURL 与 GetPresignedURL 的区别
+## 十一、PresignGetObject 与 PresignPutObject 的区别
 
-|  | GetPublicURL | GetPresignedURL |
-| --- | --- | --- |
-| 时效 | 永久（取决于 bucket ACL） | 有时效（ttl 参数控制） |
-| 鉴权 | 无（bucket 需公开读） | 签名内嵌于 URL |
-| local 支持 | ✅ 绝对路径或 HTTP URL | ❌ ErrNotSupported |
-| 适用场景 | CDN 回源、公开资源分发 | 私有文件临时授权下载 |
+|  | PresignGetObject | PresignPutObject | GetPublicURL |
+| --- | --- | --- | --- |
+| 时效 | 有时效（ttl 参数控制） | 有时效（ttl 参数控制） | 永久（取决于 bucket ACL） |
+| 鉴权 | 签名内嵌于 URL | 签名内嵌于 URL | 无（bucket 需公开读） |
+| local 支持 | ❌ ErrNotSupported | ❌ ErrNotSupported | ✅ 绝对路径或 HTTP URL |
+| 适用场景 | 私有文件临时授权下载 | 私有文件临时授权上传（准一次性 URL） | CDN 回源、公开资源分发 |
+
+`PresignPutObject` 通过短期 TTL 实现"准一次性 URL"。将 URL 的签名有效期设为 30-60s，业务层确保单次调用即足够。严格的一次性约束须由服务端侧策略（如唯一 key + 上传后 rename）配合。
 
 `StoragePath.PublicURL()` 与 `GetPublicURL()` 的区别：前者是路径对象自身携带的静态信息，在构造时已确定；后者向存储后端发起请求，适合需要动态生成或校验权限的场景。
 
 ## 十二、Local Driver 实现思路
 
-Local Driver 将本地文件系统模拟为 S3 兼容后端。bucket 映射为 RootDir 下的一级子目录，key 映射为该子目录下的相对文件路径。
+Local Driver 将本地文件系统模拟为 S3 兼容后端。bucket 映射为 RootDir/data/ 下的子目录，key 映射为该子目录下的相对文件路径。**元数据采用 sidecar 方案**（独立 JSON 文件），不依赖 xattr，跨平台兼容。
 
-### 12.1 路径映射规则
+### 12.1 路径与元数据布局
 
 ```
 RootDir      = /data/storage
@@ -411,22 +423,32 @@ HTTPBaseURL  = http://localhost:8080 （可选）
 bucket       = avatars
 key          = user/123.png
 
-文件系统路径:   /data/storage/avatars/user/123.png
-Path.URI():    file:///data/storage/avatars/user/123.png
-Path.Path():   /data/storage/avatars/user/123.png
-Path.PublicURL(): http://localhost:8080/data/storage/avatars/user/123.png
+// sidecar 布局
+数据文件:      /data/storage/data/avatars/user/123.png
+元数据文件:    /data/storage/meta/avatars/{sha1(key)}.json
+分片上传目录:  /data/storage/.multipart/{uploadID}/part-{partNumber:04d}
+```
+
+sidecar 方案优先于 xattr 的理由：
+- xattr 在 FAT32 / NFS / 部分 overlay 文件系统上不可用
+- sidecar 零额外依赖，跨 Windows/macOS/Linux 一致
+
+```
+Path.URI():    file:///data/storage/data/avatars/user/123.png
+Path.Path():   /data/storage/data/avatars/user/123.png
+Path.PublicURL(): http://localhost:8080/data/avatars/user/123.png
 ```
 
 ### 12.2 基础操作实现
 
 | 接口方法 | 所属子接口 | 文件系统操作 | 注意事项 |
 | --- | --- | --- | --- |
-| PutObject | Core | os.MkdirAll + 写临时文件后 os.Rename | Rename 保证原子性，避免写到一半被读 |
-| GetObject | Core | os.Open + os.Stat | 不存在时将 os.ErrNotExist 包装为 ErrNotFound |
-| DeleteObject | Core | os.Remove | 文件不存在时静默返回 nil（幂等） |
+| PutObject | Core | os.MkdirAll + 写临时文件后 os.Rename + 写 meta/sha1.json | Rename 保证原子性，避免写到一半被读；元数据用 sha1(key) 做文件名 |
+| GetObject | Core | os.Open + 读 meta/sha1.json | 不存在时将 os.ErrNotExist 包装为 ErrNotFound |
+| DeleteObject | Core | os.Remove(data) + os.Remove(meta) | 文件不存在时静默返回 nil（幂等） |
 | DeleteObjects | Core | 循环调用 os.Remove | 收集失败项，返回 *BulkDeleteError |
-| HeadObject | Ext | os.Stat | 用 FileInfo 填充 ObjectInfo，Path 由 makePath 构造 |
-| CopyObject | Ext | io.Copy + 原子写 | src、dst 均在同一 rootDir 内，天然满足同后端约束 |
+| HeadObject | Ext | 读 meta/sha1.json | 用 metaFile JSON 填充 ObjectInfo |
+| CopyObject | Ext | 同 bucket 用 os.Link；跨 bucket 用 io.Copy + 原子写 | src、dst 均在同一 rootDir 内，天然满足同后端约束 |
 
 ### 12.3 分片上传模拟
 
@@ -464,10 +486,10 @@ testkit 只 import 根包，不 import 任何具体 driver。`RunDriverSuite` �
 | --- | --- | --- |
 | MinIO driver | github.com/minio/minio-go/v7 | 官方 SDK，S3v4 签名，原生分片支持 |
 | COS driver | github.com/tencentyun/cos-go-sdk-v5 | 官方 SDK，S3 兼容接口 |
-| SeaweedFS driver | github.com/minio/minio-go/v7 | S3 API 兼容，与 MinIO SDK 通用 |
+| SeaweedFS driver | github.com/minio/minio-go/v7 | 独立 driver，通过 s3base 共享 minio-go SDK，不做嵌入 |
 | Local driver | 标准库 os / io | 无额外依赖，分片用临时文件模拟 |
 | 并发分片 | golang.org/x/sync/errgroup | 错误传播 + ctx 取消 |
-| 重试 | github.com/avast/retry-go/v4 | 退避策略，轻量 |
+| 重试 | 内联退避（client.go） | 分片上传失败按 200ms→400ms→800ms 退避，不引第三方包 |
 | 测试 | testing + github.com/stretchr/testify | 断言与 suite |
 
 ## 十五、关键风险与应对
@@ -477,10 +499,11 @@ testkit 只 import 根包，不 import 任何具体 driver。`RunDriverSuite` �
 | 忘记 blank import | 调用方未引入 driver，New() 返回 unknown backend 错误 | 错误信息明确提示须 blank import，文档首页突出说明 |
 | S3 兼容差异 | COS / SeaweedFS 对 ListObjects 的 delimiter 支持不完整 | driver 层做兼容；testkit 覆盖 list 边界 case |
 | multipart ETag 差异 | 各后端 multipart ETag 计算方式不同 | 大文件通过 CRC32C 独立校验，不依赖 ETag 比较 |
-| presign 签名版本 | COS 签名算法与标准 S3v4 有细节差异 | COS driver 单独实现 GetPresignedURL |
-| PublicURL 误用 | 对非公开 bucket 调用 GetPublicURL，URL 可构造但 403 | 文档注明前提；Config 可增加 BucketACL 字段做运行时校验 |
+| presign 签名版本 | COS 签名算法与标准 S3v4 有细节差异 | COS driver 单独实现 PresignGetObject / PresignPutObject |
+| PublicURL 误用 | 对非公开 bucket 调用 GetPublicURL，URL 可构造但 403 | 文档注明前提 |
 | 分片泄漏 | 失败后未 Abort，已上传分片持续计费 | UploadObject 封装保证任何错误路径都触发 Abort；建议存储侧配置 Lifecycle 规则清理 7 天以上未完成分片 |
-| Local GetPresignedURL | 本地文件无法生成签名 URL | 明确返回 ErrNotSupported，调用方 errors.Is 后降级 |
+| Local Presign | 本地文件无法生成签名 URL | PresignGetObject / PresignPutObject 明确返回 ErrNotSupported，调用方 errors.Is 后降级 |
+| Local 元数据适配性 | xattr 在 FAT32/NFS/overlay 文件系统上不可用 | 采用 sidecar 方案（BaseDir/meta/sha1.json），跨平台零依赖 |
 | StoragePath 比较 | interface 不可直接用 `==` 比较 | 文档明确说明统一使用 `a.URI() == b.URI()` |
 | UploadPart ETag 双引号 | S3 规范要求 ETag 保留双引号，各 SDK 行为不一致 | driver 实现规范明确要求统一保留双引号，testkit 覆盖校验 |
 
@@ -489,7 +512,7 @@ testkit 只 import 根包，不 import 任何具体 driver。`RunDriverSuite` �
 | 阶段 | 交付物 | 目标周期 |
 | --- | --- | --- |
 | M1 | 根包类型定义（接口 + StoragePath + errors + options + types）+ MockDriver + 注册机制 | Week 1 |
-| M2 | MinIO driver（含分片 + GetPublicURL + GetPresignedURL）+ testkit suite | Week 2 |
+| M2 | MinIO driver（含分片 + GetPublicURL + PresignGetObject / PresignPutObject）+ testkit suite | Week 2 |
 | M3 | COS / SeaweedFS / Local driver | Week 3–4 |
 | M4 | Client.UploadObject 高层封装、Range Get、重试策略 | Week 5 |
 | M5 | 文档、示例、集成测试 CI | Week 6 |

@@ -1,14 +1,14 @@
-package weedfs
+package seaweedfs
 
 import (
 	"os"
 	"testing"
 
 	"github.com/insmtx/storage-go"
-	"github.com/insmtx/storage-go/driver/storagetest"
+	"github.com/insmtx/storage-go/testkit"
 )
 
-func TestWeedfsIntegration(t *testing.T) {
+func TestSeaweedFSIntegration(t *testing.T) {
 	endpoint := os.Getenv("TEST_WEEDFS_ENDPOINT")
 	if endpoint == "" {
 		t.Skip("set TEST_WEEDFS_ENDPOINT to enable integration test")
@@ -23,5 +23,5 @@ func TestWeedfsIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	storagetest.RunSuite(t, d, "test-bucket")
+	testkit.RunSuite(t, d, "test-bucket")
 }
