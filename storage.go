@@ -6,6 +6,13 @@ import (
 	"time"
 )
 
+// Storage 由 Base / Multipart / Ext 组合而成。
+type Storage interface {
+	Base
+	Multipart
+	Ext
+}
+
 // Base 基础操作，覆盖 90% 的 CRUD/列举场景。
 type Base interface {
 	PutObject(ctx context.Context, bucket, key string, body io.Reader, opts ...PutOption) (*PutObjectResult, error)
@@ -29,11 +36,4 @@ type Ext interface {
 	CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string) error
 	PresignGetObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...GetOption) (string, error)
 	PresignPutObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...PutOption) (string, error)
-}
-
-// Storage 由 Base / Multipart / Ext 组合而成。
-type Storage interface {
-	Base
-	Multipart
-	Ext
 }

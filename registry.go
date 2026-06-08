@@ -13,7 +13,6 @@ var (
 )
 
 // Register 注册存储驱动。
-//
 // 通常由 driver 包的 init() 调用。
 func Register(name string, factory DriverFactory) {
 	if name == "" {
