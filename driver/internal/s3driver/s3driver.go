@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -322,6 +323,90 @@ func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID
 		UploadId: aws.String(uploadID),
 	})
 	return wrapS3Err(err)
+}
+
+// ---------- Ext ----------
+
+func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*storage.ObjectInfo, error) {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
+		return nil, err
+	}
+	if err := pathcheck.ValidateKey(key); err != nil {
+		return nil, err
+	}
+	output, err := d.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, wrapS3Err(err)
+	}
+	info := &storage.ObjectInfo{
+		Path:         d.newPath(bucket, key),
+		Size:         aws.ToInt64(output.ContentLength),
+		ETag:         aws.ToString(output.ETag),
+		ContentType:  aws.ToString(output.ContentType),
+		LastModified: aws.ToTime(output.LastModified),
+	}
+	if output.Metadata != nil {
+		info.Metadata = output.Metadata
+	}
+	return info, nil
+}
+
+func (d *Driver) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string) error {
+	if err := pathcheck.ValidateBucket(srcBucket); err != nil {
+		return err
+	}
+	if err := pathcheck.ValidateBucket(dstBucket); err != nil {
+		return err
+	}
+	if err := pathcheck.ValidateKey(srcKey); err != nil {
+		return err
+	}
+	if err := pathcheck.ValidateKey(dstKey); err != nil {
+		return err
+	}
+	_, err := d.client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(dstBucket),
+		Key:        aws.String(dstKey),
+		CopySource: aws.String(srcBucket + "/" + srcKey),
+	})
+	return wrapS3Err(err)
+}
+
+func (d *Driver) PresignGetObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...storage.GetOption) (string, error) {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
+		return "", err
+	}
+	if err := pathcheck.ValidateKey(key); err != nil {
+		return "", err
+	}
+	req, err := d.presign.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", wrapS3Err(err)
+	}
+	return req.URL, nil
+}
+
+func (d *Driver) PresignPutObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...storage.PutOption) (string, error) {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
+		return "", err
+	}
+	if err := pathcheck.ValidateKey(key); err != nil {
+		return "", err
+	}
+	req, err := d.presign.PresignPutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(ttl))
+	if err != nil {
+		return "", wrapS3Err(err)
+	}
+	return req.URL, nil
 }
 
 func strPtr(s string) *string {
