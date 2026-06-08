@@ -71,7 +71,7 @@ func sortLocks(a, b string) (first, second string) {
 	return b, a
 }
 
-// ---------- Core ----------
+// ---------- Base ----------
 
 func (d *Driver) PutObject(ctx context.Context, bucket, key string, body io.Reader, opts ...storage.PutOption) (*storage.PutObjectResult, error) {
 	if err := pathcheck.ValidateBucket(bucket); err != nil {

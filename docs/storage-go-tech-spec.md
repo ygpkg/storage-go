@@ -31,7 +31,7 @@ storage-go 是一个统一的对象存储抽象库，对外暴露一套与 S3 �
 
 ```
 storage-go/
-├── interface.go         # 接口定义：Core / Multipart / Ext，由三者组合成 Storage
+├── interface.go         # 接口定义：Base / Multipart / Ext，由三者组合成 Storage
 ├── path.go              # StoragePath interface 及 s3Path / localPath 实现 + NewS3Path / NewLocalPath 工厂
 ├── errors.go            # sentinel error
 ├── options.go           # PutOption / GetOption / ListOption / UploadOption
@@ -122,11 +122,11 @@ type StoragePath interface {
 
 | 接口方法 | 所属子接口 | 对标 S3 API | 说明 |
 | --- | --- | --- | --- |
-| PutObject | Core | PutObject | 单次上传，≤5 GB |
-| GetObject | Core | GetObject | 下载，支持 Range |
-| DeleteObject | Core | DeleteObject | 单对象删除，幂等 |
-| DeleteObjects | Core | DeleteObjects | 批量删除，最多 1000 个 |
-| ListObjects | Core | ListObjectsV2 | 前缀列举，返回 *ListObjectsOutput，配套 ListPager 分页 |
+| PutObject | Base | PutObject | 单次上传，≤5 GB |
+| GetObject | Base | GetObject | 下载，支持 Range |
+| DeleteObject | Base | DeleteObject | 单对象删除，幂等 |
+| DeleteObjects | Base | DeleteObjects | 批量删除，最多 1000 个 |
+| ListObjects | Base | ListObjectsV2 | 前缀列举，返回 *ListObjectsOutput，配套 ListPager 分页 |
 | HeadObject | Ext | HeadObject | 获取元数据，不下载内容 |
 | CopyObject | Ext | CopyObject | 服务端复制 |
 | CreateMultipartUpload | Multipart | CreateMultipartUpload | 初始化分片上传 |
@@ -142,13 +142,13 @@ type StoragePath interface {
 
 按调用频度与场景差异，把所有方法拆到三个子接口，再由它们组合形成统一的 `Storage` 入口：
 
-- **Core** — 常用操作，覆盖 90% 的 CRUD/列举场景
+- **Base** — 基础操作，覆盖 90% 的 CRUD/列举场景
 - **Multipart** — 分片上传，独立成簇，便于按需 mock 与替换
 - **Ext** — 不常用或场景特殊（Head/Copy/URL/Close），可独立实现或返回 `ErrNotSupported`
 
 ```go
-// 常用操作
-type Core interface {
+// 基础操作
+type Base interface {
     PutObject(ctx, bucket, key string, body io.Reader, opts ...PutOption) (*PutObjectResult, error)
     GetObject(ctx, bucket, key string, opts ...GetOption) (*GetObjectResult, error)
     DeleteObject(ctx, bucket, key string) error
@@ -176,7 +176,7 @@ type Ext interface {
 
 // 组合后的总入口
 type Storage interface {
-    Core
+    Base
     Multipart
     Ext
 }
@@ -186,7 +186,7 @@ type Storage interface {
 
 | 好处 | 说明 |
 | --- | --- |
-| 按需组合 | 测试时可只 mock 关心的子接口；轻量场景（如纯图片分发）可只实现 Core |
+| 按需组合 | 测试时可只 mock 关心的子接口；轻量场景（如纯图片分发）可只实现 Base |
 | 关注点分离 | 分片逻辑与基础 CRUD 解耦，未来替换分片实现不影响 CRUD 路径 |
 | 不常用操作降级 | driver 对 Ext 中不支持的方法（如 Local 的 PresignGetObject / PresignPutObject）可统一返回 `ErrNotSupported`，调用方按子接口判断 |
 | 演进更稳 | 任何子接口新增方法只影响该子接口的实现者，不会扩散到所有 driver |
@@ -240,7 +240,7 @@ type DeleteFailure struct {
 }
 ```
 
-ListObjects 采用对齐 AWS SDK 的分页模型，不在接口内暴露 channel 流式。分页通过 `NewListObjectsPaginator(s Core, ...) (ListPager, error)` 迭代器提供，`ListPager` 接口包含 `HasMore() bool` 和 `NextPage(ctx) (*ListObjectsOutput, error)`。
+ListObjects 采用对齐 AWS SDK 的分页模型，不在接口内暴露 channel 流式。分页通过 `NewListObjectsPaginator(s Base, ...) (ListPager, error)` 迭代器提供，`ListPager` 接口包含 `HasMore() bool` 和 `NextPage(ctx) (*ListObjectsOutput, error)`。
 
 ## 六、错误处理
 
@@ -391,7 +391,7 @@ func wrapErr(err error) error {
 
 ### 10.2 Client.UploadObject 高层封装
 
-Core / Multipart 子接口保持原子性（每个方法对应一次独立的存储请求），`Client.UploadObject` 自动处理切分、并发上传、排序和失败 Abort：
+Base / Multipart 子接口保持原子性（每个方法对应一次独立的存储请求），`Client.UploadObject` 自动处理切分、并发上传、排序和失败 Abort：
 
 - 对象大小低于 `MultipartThreshold`（默认 128 MB）时，自动降级为 `PutObject`
 - 并发度由 `WithConcurrency` 控制，默认 5 个 goroutine 同时上传
@@ -443,10 +443,10 @@ Path.PublicURL(): http://localhost:8080/data/avatars/user/123.png
 
 | 接口方法 | 所属子接口 | 文件系统操作 | 注意事项 |
 | --- | --- | --- | --- |
-| PutObject | Core | os.MkdirAll + 写临时文件后 os.Rename + 写 meta/sha1.json | Rename 保证原子性，避免写到一半被读；元数据用 sha1(key) 做文件名 |
-| GetObject | Core | os.Open + 读 meta/sha1.json | 不存在时将 os.ErrNotExist 包装为 ErrNotFound |
-| DeleteObject | Core | os.Remove(data) + os.Remove(meta) | 文件不存在时静默返回 nil（幂等） |
-| DeleteObjects | Core | 循环调用 os.Remove | 收集失败项，返回 *BulkDeleteError |
+| PutObject | Base | os.MkdirAll + 写临时文件后 os.Rename + 写 meta/sha1.json | Rename 保证原子性，避免写到一半被读；元数据用 sha1(key) 做文件名 |
+| GetObject | Base | os.Open + 读 meta/sha1.json | 不存在时将 os.ErrNotExist 包装为 ErrNotFound |
+| DeleteObject | Base | os.Remove(data) + os.Remove(meta) | 文件不存在时静默返回 nil（幂等） |
+| DeleteObjects | Base | 循环调用 os.Remove | 收集失败项，返回 *BulkDeleteError |
 | HeadObject | Ext | 读 meta/sha1.json | 用 metaFile JSON 填充 ObjectInfo |
 | CopyObject | Ext | 同 bucket 用 os.Link；跨 bucket 用 io.Copy + 原子写 | src、dst 均在同一 rootDir 内，天然满足同后端约束 |
 

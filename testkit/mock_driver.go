@@ -32,7 +32,7 @@ func (m *mockStorage) newPath(bucket, key string) storage.StoragePath {
 
 func (m *mockStorage) Close() error { return nil }
 
-// ---------- Core ----------
+// ---------- Base ----------
 
 func (m *mockStorage) PutObject(ctx context.Context, bucket, key string, body io.Reader, opts ...storage.PutOption) (*storage.PutObjectResult, error) {
 	m.mu.Lock()

@@ -62,7 +62,7 @@ func TestStorageInterface(t *testing.T) {
 }
 
 func TestSubInterfaces(t *testing.T) {
-	var _ Core = (*fakeStorage)(nil)
+	var _ Base = (*fakeStorage)(nil)
 	var _ Multipart = (*fakeStorage)(nil)
 	var _ Ext = (*fakeStorage)(nil)
 }

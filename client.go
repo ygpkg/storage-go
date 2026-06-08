@@ -189,13 +189,13 @@ type ListPager interface {
 }
 
 // NewListObjectsPaginator 构造 ListPager。
-func NewListObjectsPaginator(s Core, ctx context.Context, bucket, prefix string, opts ...ListOption) (ListPager, error) {
+func NewListObjectsPaginator(s Base, ctx context.Context, bucket, prefix string, opts ...ListOption) (ListPager, error) {
 	o := &ListOptions{}
 	for _, opt := range opts {
 		opt(o)
 	}
 	return &listPager{
-		core:    s,
+		base:    s,
 		ctx:     ctx,
 		bucket:  bucket,
 		prefix:  prefix,
@@ -204,7 +204,7 @@ func NewListObjectsPaginator(s Core, ctx context.Context, bucket, prefix string,
 }
 
 type listPager struct {
-	core      Core
+	base      Base
 	ctx       context.Context
 	bucket    string
 	prefix    string
@@ -241,7 +241,7 @@ func (p *listPager) NextPage(ctx context.Context) (*ListObjectsOutput, error) {
 			opts = append(opts, WithRecursive(true))
 		}
 	}
-	out, err := p.core.ListObjects(ctx, p.bucket, p.prefix, opts...)
+	out, err := p.base.ListObjects(ctx, p.bucket, p.prefix, opts...)
 	if err != nil {
 		return nil, err
 	}

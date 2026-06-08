@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// Core 常用操作，覆盖 90% 的 CRUD/列举场景。
-type Core interface {
+// Base 基础操作，覆盖 90% 的 CRUD/列举场景。
+type Base interface {
 	PutObject(ctx context.Context, bucket, key string, body io.Reader, opts ...PutOption) (*PutObjectResult, error)
 	GetObject(ctx context.Context, bucket, key string, opts ...GetOption) (*GetObjectResult, error)
 	DeleteObject(ctx context.Context, bucket, key string) error
@@ -33,9 +33,9 @@ type Ext interface {
 	Close() error
 }
 
-// Storage 由 Core / Multipart / Ext 组合而成。
+// Storage 由 Base / Multipart / Ext 组合而成。
 type Storage interface {
-	Core
+	Base
 	Multipart
 	Ext
 }
