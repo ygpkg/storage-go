@@ -24,14 +24,13 @@ setup() {
 
   export STORAGE_DRIVER="$DRIVER"
 
-  export STORAGE_ENDPOINT="${!prefix_var:-}" 2>/dev/null || true
-  export STORAGE_ENDPOINT=$(eval echo \$"${prefix}_ENDPOINT")
-  export STORAGE_REGION=$(eval echo \$"${prefix}_REGION")
-  export STORAGE_ACCESS_KEY=$(eval echo \$"${prefix}_ACCESS_KEY")
-  export STORAGE_SECRET_KEY=$(eval echo \$"${prefix}_SECRET_KEY")
-  export STORAGE_BUCKET=$(eval echo \$"${prefix}_BUCKET")
-  export STORAGE_BASE_URL=$(eval echo \$"${prefix}_BASE_URL")
-  export STORAGE_BASE_DIR=$(eval echo \$"${prefix}_BASE_DIR")
+  export STORAGE_ENDPOINT=$(eval echo \${${prefix}_ENDPOINT:-})
+  export STORAGE_REGION=$(eval echo \${${prefix}_REGION:-})
+  export STORAGE_ACCESS_KEY=$(eval echo \${${prefix}_ACCESS_KEY:-})
+  export STORAGE_SECRET_KEY=$(eval echo \${${prefix}_SECRET_KEY:-})
+  export STORAGE_BUCKET=$(eval echo \${${prefix}_BUCKET:-})
+  export STORAGE_BASE_URL=$(eval echo \${${prefix}_BASE_URL:-})
+  export STORAGE_BASE_DIR=$(eval echo \${${prefix}_BASE_DIR:-})
 }
 
 case "$DRIVER" in

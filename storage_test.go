@@ -39,6 +39,18 @@ func loadConfig() (storage.DriverType, storage.Config, string) {
 
 	bucket := os.Getenv("STORAGE_BUCKET")
 
+	if driverName == "local" {
+		if cfg.BaseDir == "" {
+			cfg.BaseDir = os.TempDir()
+		}
+		if cfg.BaseURL == "" {
+			cfg.BaseURL = "http://localhost"
+		}
+		if bucket == "" {
+			bucket = "test-bucket"
+		}
+	}
+
 	return storage.DriverType(driverName), cfg, bucket
 }
 
@@ -65,6 +77,7 @@ func TestPutGet(t *testing.T) {
 	if res.Path == nil {
 		t.Fatal("Path is nil")
 	}
+	logStoragePath(t, "PutObject Path", res.Path)
 	if res.Path.Path() == "" {
 		t.Error("Path.Path() is empty")
 	}
@@ -118,6 +131,7 @@ func TestHeadObject(t *testing.T) {
 	if info.Path == nil || info.Path.Path() == "" {
 		t.Error("Path is nil or empty")
 	}
+	logStoragePath(t, "HeadObject Path", info.Path)
 }
 
 func TestDeleteObject(t *testing.T) {
@@ -180,6 +194,9 @@ func TestListObjects_NonRecursive(t *testing.T) {
 		if c.Path == nil || c.Path.Path() == "" {
 			t.Error("Content Path is nil or empty")
 		}
+	}
+	if len(out.Contents) > 0 && out.Contents[0].Path != nil {
+		logStoragePath(t, "ListObjects first content Path", out.Contents[0].Path)
 	}
 }
 
@@ -283,6 +300,22 @@ func TestErrors(t *testing.T) {
 	if _, err := testStorage.PutObject(ctx, bucket, "/bad-key", bytes.NewReader([]byte("x"))); !errors.Is(err, storage.ErrInvalidPath) {
 		t.Errorf("PutObject(bad-key) = %v, want ErrInvalidPath", err)
 	}
+}
+
+func logStoragePath(t *testing.T, label string, p storage.StoragePath) {
+	t.Helper()
+	if p == nil {
+		t.Logf("%s: Path is nil", label)
+		return
+	}
+	t.Logf("%s:", label)
+	t.Logf("  Scheme   = %s", p.Scheme())
+	t.Logf("  IsLocal  = %v", p.IsLocal())
+	t.Logf("  Bucket   = %s", p.Bucket())
+	t.Logf("  Key      = %s", p.Key())
+	t.Logf("  URI      = %s", p.URI())
+	t.Logf("  Path     = %s", p.Path())
+	t.Logf("  PublicURL= %s", p.PublicURL())
 }
 
 func hasContent(contents []storage.ObjectInfo, key string) bool {

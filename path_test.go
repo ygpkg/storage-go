@@ -51,13 +51,13 @@ func TestLocalPath(t *testing.T) {
 	if !p.IsLocal() {
 		t.Error("IsLocal should be true")
 	}
-	if p.Bucket() != "" {
-		t.Errorf("Bucket = %q, want empty", p.Bucket())
+	if p.Bucket() != "avatars" {
+		t.Errorf("Bucket = %q, want avatars", p.Bucket())
 	}
-	if got, want := p.URI(), "file:///data/storage/avatars/user/1.png"; got != want {
+	if got, want := p.URI(), "file://avatars/user/1.png"; got != want {
 		t.Errorf("URI = %q, want %q", got, want)
 	}
-	if got, want := p.Path(), "/data/storage/avatars/user/1.png"; got != want {
+	if got, want := p.Path(), "avatars/user/1.png"; got != want {
 		t.Errorf("Path = %q, want %q", got, want)
 	}
 	if got, want := p.PublicURL(), "/data/storage/avatars/user/1.png"; got != want {

@@ -70,11 +70,11 @@ type filePath struct {
 }
 
 func (p *filePath) URI() string {
-	return SchemeFile + "://" + p.absPath()
+	return SchemeFile + "://" + p.bucket + "/" + p.key
 }
 
 func (p *filePath) Path() string {
-	return p.absPath()
+	return p.bucket + "/" + p.key
 }
 
 func (p *filePath) PublicURL() string {
@@ -86,7 +86,7 @@ func (p *filePath) PublicURL() string {
 
 func (p *filePath) Scheme() string { return SchemeFile }
 func (p *filePath) IsLocal() bool  { return true }
-func (p *filePath) Bucket() string { return "" }
+func (p *filePath) Bucket() string { return p.bucket }
 func (p *filePath) Key() string    { return p.key }
 
 func (p *filePath) absPath() string {
