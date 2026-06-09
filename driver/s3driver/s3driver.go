@@ -24,7 +24,8 @@ import (
 type Driver struct {
 	client  *s3.Client        // S3 客户端
 	presign *s3.PresignClient // S3 预签名客户端
-	baseURL string            // 对外访问基础 URL，用于构建 PublicURL
+	baseURL string            // 对外公共访问基础 URL，用于构建 PublicURL
+	endpoint string            // S3 服务端点
 	region  string            // 区域
 }
 
@@ -36,6 +37,9 @@ func New(cfg storage.Config) (storage.Storage, error) {
 	}
 	if cfg.AccessKey == "" {
 		return nil, fmt.Errorf("%w: AccessKey is required", storage.ErrInvalidConfig)
+	}
+	if cfg.Region == "" {
+		return nil, fmt.Errorf("%w: Region is required", storage.ErrInvalidConfig)
 	}
 	awsCfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithRegion(cfg.Region),
@@ -53,13 +57,14 @@ func New(cfg storage.Config) (storage.Storage, error) {
 	return &Driver{
 		client:  client,
 		presign: s3.NewPresignClient(client),
-		baseURL: cfg.HTTPBaseURL,
+		baseURL: cfg.BaseURL,
+		endpoint: cfg.Endpoint,
 		region:  cfg.Region,
 	}, nil
 }
 
 func (d *Driver) newPath(bucket, key string) storage.StoragePath {
-	return storage.NewS3Path(bucket, key, d.baseURL)
+	return storage.NewS3Path(bucket, key, d.baseURL, d.endpoint)
 }
 
 func usePathStyle(endpoint string) bool {
@@ -106,10 +111,17 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, body io.Read
 		}
 		return nil, wrapS3Err(err)
 	}
-	etag := aws.ToString(output.ETag)
+	etag := trimETag(aws.ToString(output.ETag))
 	return &storage.PutObjectResult{
-		Path: d.newPath(bucket, key),
-		ETag: etag,
+		ObjectInfo: storage.ObjectInfo{
+			Path:         d.newPath(bucket, key),
+			Size:         aws.ToInt64(output.Size),
+			ETag:         etag,
+			ContentType:  o.ContentType,
+			LastModified: time.Now(),
+			Metadata:     o.Metadata,
+		},
+		VersionID: aws.ToString(output.VersionId),
 	}, nil
 }
 
@@ -136,12 +148,14 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...stor
 		return nil, wrapS3Err(err)
 	}
 	return &storage.GetObjectResult{
-		Body:          output.Body,
-		Path:          d.newPath(bucket, key),
-		ContentType:   aws.ToString(output.ContentType),
-		ContentLength: aws.ToInt64(output.ContentLength),
-		ETag:          aws.ToString(output.ETag),
-		LastModified:  aws.ToTime(output.LastModified),
+		Body: output.Body,
+		ObjectInfo: storage.ObjectInfo{
+			Path:         d.newPath(bucket, key),
+			Size:         aws.ToInt64(output.ContentLength),
+			ETag:         trimETag(aws.ToString(output.ETag)),
+			ContentType:  aws.ToString(output.ContentType),
+			LastModified: aws.ToTime(output.LastModified),
+		},
 	}, nil
 }
 
@@ -206,9 +220,11 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 	input := &s3.ListObjectsV2Input{
 		Bucket:            aws.String(bucket),
 		Prefix:            aws.String(prefix),
-		MaxKeys:           aws.Int32(int32(o.MaxKeys)),
-		StartAfter:        aws.String(o.StartAfter),
-		ContinuationToken: aws.String(o.ContinuationToken),
+		StartAfter:        strPtr(o.StartAfter),
+		ContinuationToken: strPtr(o.ContinuationToken),
+	}
+	if o.MaxKeys > 0 {
+		input.MaxKeys = aws.Int32(int32(o.MaxKeys))
 	}
 	if !o.Recursive {
 		input.Delimiter = aws.String("/")
@@ -289,7 +305,7 @@ func (d *Driver) UploadPart(ctx context.Context, bucket, key, uploadID string, p
 	}
 	return &storage.CompletedPart{
 		PartNumber: partNumber,
-		ETag:       aws.ToString(output.ETag),
+		ETag:       trimETag(aws.ToString(output.ETag)),
 	}, nil
 }
 
@@ -350,7 +366,7 @@ func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*storage.O
 	info := &storage.ObjectInfo{
 		Path:         d.newPath(bucket, key),
 		Size:         aws.ToInt64(output.ContentLength),
-		ETag:         aws.ToString(output.ETag),
+		ETag:         trimETag(aws.ToString(output.ETag)),
 		ContentType:  aws.ToString(output.ContentType),
 		LastModified: aws.ToTime(output.LastModified),
 	}
@@ -436,4 +452,8 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+func trimETag(etag string) string {
+	return strings.Trim(etag, "\"")
 }

@@ -14,3 +14,10 @@ go.work.sum
 
 # OS
 .DS_Store
+
+# Test config (contains secrets)
+.storage_test.json
+.env.test
+
+# Docs
+docs/superpowers/**

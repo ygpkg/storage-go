@@ -1,15 +1,16 @@
 package local
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ygpkg/storage-go"
 )
 
 const multipartDir = ".multipart"
@@ -64,6 +65,19 @@ func (m *multipartStore) UploadMeta(uploadID string) *uploadMeta {
 	return m.active[uploadID]
 }
 
+func (m *multipartStore) Validate(uploadID, bucket, key string) (*uploadMeta, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	um, ok := m.active[uploadID]
+	if !ok {
+		return nil, storage.ErrMultipartAborted
+	}
+	if um.Bucket != bucket || um.Key != key {
+		return nil, fmt.Errorf("multipart upload target mismatch")
+	}
+	return um, nil
+}
+
 func (m *multipartStore) WritePart(uploadID string, partNum int, r io.Reader, size int64) error {
 	p := filepath.Join(m.uploadDir(uploadID), fmt.Sprintf("part-%04d", partNum))
 	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
@@ -85,29 +99,21 @@ func (m *multipartStore) WritePart(uploadID string, partNum int, r io.Reader, si
 	return err
 }
 
-func (m *multipartStore) Merge(uploadID, dst string) error {
-	entries, err := os.ReadDir(m.uploadDir(uploadID))
-	if err != nil {
-		return err
-	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-
+func (m *multipartStore) Merge(uploadID, dst string, parts []storage.CompletedPart) error {
 	tmp := dst + ".tmp"
 	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
-	for _, name := range names {
+	for _, part := range parts {
+		name := fmt.Sprintf("part-%04d", part.PartNumber)
 		in, err := os.Open(filepath.Join(m.uploadDir(uploadID), name))
 		if err != nil {
 			out.Close()
 			os.Remove(tmp)
+			if errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("missing multipart part %d", part.PartNumber)
+			}
 			return err
 		}
 		if _, err := io.Copy(out, in); err != nil {

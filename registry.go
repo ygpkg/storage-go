@@ -34,11 +34,11 @@ func Register(name string, factory DriverFactory) {
 }
 
 // LookupDriver 获取驱动工厂。
-func LookupDriver(name string) (DriverFactory, bool) {
+func LookupDriver(name DriverType) (DriverFactory, bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 
-	factory, ok := registry[name]
+	factory, ok := registry[string(name)]
 	return factory, ok
 }
 
@@ -56,17 +56,16 @@ func Drivers() []string {
 }
 
 // New 根据 name 查注册表并用 cfg 构建 Storage。
-// name 是注册到注册表的驱动名（与 LookupDriver 入参、Register 入参含义一致），
-// DriverMinio/DriverCOS 等常量可用 string(...) 显式转换后传入。
+// name 是注册到注册表的驱动名，使用 DriverMinio/DriverCOS 等常量。
 // 未注册时返回明确错误提示需 blank import 相应 driver 子包。
-func New(name string, cfg Config) (Storage, error) {
+func New(name DriverType, cfg Config) (Storage, error) {
 	if name == "" {
-		return nil, wrapInvalidConfig("Driver is required")
+		return nil, fmt.Errorf("%w: Driver is required", ErrInvalidConfig)
 	}
 	f, ok := LookupDriver(name)
 	if !ok {
-		return nil, wrapInvalidConfig(
-			"driver %q not registered; please blank import _ \"github.com/ygpkg/storage-go/driver/" + name + "\"")
+		return nil, fmt.Errorf("%w: driver %q not registered; please blank import _ \"github.com/ygpkg/storage-go/driver/"+string(name)+"\"",
+			ErrInvalidConfig, string(name))
 	}
 	return f(cfg)
 }
