@@ -17,7 +17,7 @@ import (
 
 func newTestDriver(t *testing.T) *Driver {
 	t.Helper()
-	d, err := New(storage.Config{LocalDir: t.TempDir()})
+	d, err := New(storage.Config{BaseDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func newTestDriver(t *testing.T) *Driver {
 
 func newTestStorage(t *testing.T) storage.Storage {
 	t.Helper()
-	d, err := New(storage.Config{LocalDir: t.TempDir()})
+	d, err := New(storage.Config{BaseDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func newTestStorage(t *testing.T) storage.Storage {
 func TestDriverNewRequiresBaseDir(t *testing.T) {
 	_, err := New(storage.Config{})
 	if err == nil {
-		t.Fatal("expected error for empty LocalDir")
+		t.Fatal("expected error for empty BaseDir")
 	}
 	if !errors.Is(err, storage.ErrInvalidConfig) {
 		t.Errorf("err = %v, want ErrInvalidConfig", err)
@@ -44,11 +44,11 @@ func TestDriverNewRequiresBaseDir(t *testing.T) {
 }
 
 func TestDriverRegistersSelf(t *testing.T) {
-	_, err := New(storage.Config{LocalDir: t.TempDir()})
+	_, err := New(storage.Config{BaseDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := storage.New(storage.DriverLocal, storage.Config{LocalDir: t.TempDir()})
+	s, err := storage.New(storage.DriverLocal, storage.Config{BaseDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("storage.New(local) = %v", err)
 	}
@@ -515,8 +515,8 @@ func TestDriverMultipartCompleteUsesProvidedPartOrder(t *testing.T) {
 	}
 }
 
-func TestDriverUsesHTTPBaseURLForPublicURL(t *testing.T) {
-	s, err := New(storage.Config{LocalDir: t.TempDir(), HTTPBaseURL: "https://cdn.example.com"})
+func TestDriverUsesBaseURL(t *testing.T) {
+	s, err := New(storage.Config{BaseDir: t.TempDir(), BaseURL: "https://cdn.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}

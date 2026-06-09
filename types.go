@@ -21,18 +21,14 @@ var (
 
 // PutObjectResult 单次上传结果。
 type PutObjectResult struct {
-	Path StoragePath // 对象存储路径
-	ETag string      // 对象 ETag 值
+	ObjectInfo
+	VersionID string // S3 版本控制 ID；非版本化场景为空
 }
 
 // GetObjectResult 下载结果，Body 由调用方负责 Close。
 type GetObjectResult struct {
-	Body          io.ReadCloser // 对象内容流，调用方负责关闭
-	Path          StoragePath   // 对象存储路径
-	ContentType   string        // 对象 Content-Type
-	ContentLength int64         // 对象字节数
-	ETag          string        // 对象 ETag 值
-	LastModified  time.Time     // 对象最后修改时间
+	Body io.ReadCloser // 对象内容流，调用方负责关闭
+	ObjectInfo
 }
 
 // ObjectInfo 对象元数据。

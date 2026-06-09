@@ -5,7 +5,7 @@ import (
 )
 
 func TestS3Path(t *testing.T) {
-	p := NewS3Path("avatars", "user/1.png", "https://cdn.example.com")
+	p := NewS3Path("avatars", "user/1.png", "https://cdn.example.com", "https://s3.example.com")
 	if got := p.Scheme(); got != "s3" {
 		t.Errorf("Scheme = %q, want s3", got)
 	}
@@ -29,8 +29,15 @@ func TestS3Path(t *testing.T) {
 	}
 }
 
-func TestS3PathNoEndpoint(t *testing.T) {
-	p := NewS3Path("b", "k", "")
+func TestS3PathPublicURLFallback(t *testing.T) {
+	p := NewS3Path("b", "k", "", "https://s3.example.com")
+	if got, want := p.PublicURL(), "https://s3.example.com/b/k"; got != want {
+		t.Errorf("PublicURL = %q, want %q", got, want)
+	}
+}
+
+func TestS3PathPublicURLBothEmpty(t *testing.T) {
+	p := NewS3Path("b", "k", "", "")
 	if p.PublicURL() != "" {
 		t.Errorf("PublicURL = %q, want empty", p.PublicURL())
 	}

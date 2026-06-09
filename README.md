@@ -53,7 +53,7 @@ func main() {
 ```go
     s, _ := storage.New("local", storage.Config{
         LocalDir:     "/tmp/storage",
-        HTTPBaseURL: "http://localhost:8080",
+        BaseURL: "http://localhost:8080",
     })
 // 数据文件:     {LocalDir}/data/{bucket}/key
 // 元数据文件:   {LocalDir}/meta/{bucket}/{sha1(key)}.json

@@ -302,8 +302,8 @@ type Config struct {
     UseSSL       bool
 
     // 本地磁盘后端
-    LocalDir    string // bucket 映射为 data/ 下的子目录
-    HTTPBaseURL string // 配置后 StoragePath.PublicURL() 返回 HTTP URL
+    LocalDir string // bucket 映射为 data/ 下的子目录
+    BaseURL  string // 配置后 StoragePath.PublicURL() 返回 HTTP URL；S3 后端为空时回退到 Endpoint
 
     MaxRetries   int           // 默认 3
     Timeout      time.Duration
@@ -375,7 +375,7 @@ Base / Multipart 子接口保持原子性（每个方法对应一次独立的存
 
 `PresignPutObject` 通过短期 TTL 实现"准一次性 URL"。将 URL 的签名有效期设为 30-60s，业务层确保单次调用即足够。严格的一次性约束须由服务端侧策略（如唯一 key + 上传后 rename）配合。
 
-`PublicURL` 的行为由 `StoragePath` 实现决定：S3 后端拼接 `endpoint/bucket/key`，Local 后端拼接 `HTTPBaseURL` 或回退到本地绝对路径。调用方从 `PutObjectResult`、`GetObjectResult` 等结果中的 `.Path.PublicURL()` 获取即可。
+`PublicURL` 的行为由 `StoragePath` 实现决定：S3 后端优先使用 `base_url`，为空时回退到 `endpoint`，拼接 `{base}/bucket/key`；Local 后端拼接 `BaseURL` 或回退到本地绝对路径。调用方从 `PutObjectResult`、`GetObjectResult` 等结果中的 `.Path.PublicURL()` 获取即可。
 
 ## 十二、Local Driver 实现思路
 
@@ -385,7 +385,7 @@ Local Driver 将本地文件系统模拟为 S3 兼容后端。bucket 映射为 L
 
 ```
 LocalDir     = /data/storage
-HTTPBaseURL  = http://localhost:8080 （可选）
+BaseURL      = http://localhost:8080 （可选）
 bucket       = avatars
 key          = user/123.png
 

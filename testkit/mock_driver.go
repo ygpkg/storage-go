@@ -28,7 +28,7 @@ type mockStorage struct {
 func mockKey(bucket, key string) string { return bucket + "/" + key }
 
 func (m *mockStorage) newPath(bucket, key string) storage.StoragePath {
-	return storage.NewS3Path(bucket, key, "")
+	return storage.NewS3Path(bucket, key, "", "")
 }
 
 // ---------- Base ----------
@@ -76,8 +76,13 @@ func (m *mockStorage) putObject(ctx context.Context, bucket, key string, body io
 	h := md5.Sum(data)
 	etag := fmt.Sprintf("%x", h)
 	return &storage.PutObjectResult{
-		Path: m.newPath(bucket, key),
-		ETag: etag,
+		ObjectInfo: storage.ObjectInfo{
+			Path:         m.newPath(bucket, key),
+			Size:         int64(len(data)),
+			ETag:         etag,
+			ContentType:  "application/octet-stream",
+			LastModified: time.Now(),
+		},
 	}, nil
 }
 
@@ -87,12 +92,14 @@ func (m *mockStorage) getObject(ctx context.Context, bucket, key string) (*stora
 		return nil, fmt.Errorf("%w: %s", storage.ErrNotFound, key)
 	}
 	return &storage.GetObjectResult{
-		Body:          io.NopCloser(bytes.NewReader(data)),
-		Path:          m.newPath(bucket, key),
-		ContentType:   "application/octet-stream",
-		ContentLength: int64(len(data)),
-		ETag:          fmt.Sprintf("%x", md5.Sum(data)),
-		LastModified:  time.Now(),
+		Body: io.NopCloser(bytes.NewReader(data)),
+		ObjectInfo: storage.ObjectInfo{
+			Path:         m.newPath(bucket, key),
+			Size:         int64(len(data)),
+			ETag:         fmt.Sprintf("%x", md5.Sum(data)),
+			ContentType:  "application/octet-stream",
+			LastModified: time.Now(),
+		},
 	}, nil
 }
 

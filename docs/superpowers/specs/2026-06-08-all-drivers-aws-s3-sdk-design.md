@@ -60,7 +60,7 @@ minio/  seaweedfs/  cos/
 type s3Driver struct {
     client  *s3.Client
     presign *s3.PresignClient
-    baseURL string   // 公共访问域名
+    baseURL string   // 对外公共访问基础 URL
     region  string
     bucket  string
 }
@@ -127,7 +127,7 @@ func New(cfg storage.Config) (storage.Storage, error) {
     return &s3Driver{
         client:  client,
         presign: s3.NewPresignClient(client),
-        baseURL: cfg.HTTPBaseURL,
+        baseURL: cfg.BaseURL,
         region:  cfg.Region,
         bucket:  cfg.Bucket,
     }, nil

@@ -26,7 +26,8 @@ const (
 type s3Path struct {
 	bucket   string // 存储桶名称
 	key      string // 对象 key
-	endpoint string // S3 服务端点，为空时 PublicURL() 返回空字符串
+	baseURL  string // 对外公共访问基础 URL，优先使用
+	endpoint string // S3 服务端点，baseURL 为空时回退到此
 }
 
 func (p *s3Path) URI() string {
@@ -38,10 +39,14 @@ func (p *s3Path) Path() string {
 }
 
 func (p *s3Path) PublicURL() string {
-	if p.endpoint == "" {
+	base := p.baseURL
+	if base == "" {
+		base = p.endpoint
+	}
+	if base == "" {
 		return ""
 	}
-	return strings.TrimRight(p.endpoint, "/") + "/" + p.bucket + "/" + p.key
+	return strings.TrimRight(base, "/") + "/" + p.bucket + "/" + p.key
 }
 
 func (p *s3Path) Scheme() string { return SchemeS3 }
@@ -50,9 +55,10 @@ func (p *s3Path) Bucket() string { return p.bucket }
 func (p *s3Path) Key() string    { return p.key }
 
 // NewS3Path 构造 S3 兼容后端的 StoragePath。
-// endpoint 为空时 PublicURL() 返回空字符串。
-func NewS3Path(bucket, key, endpoint string) StoragePath {
-	return &s3Path{bucket: bucket, key: key, endpoint: endpoint}
+// baseURL 为对外公共访问基础 URL，endpoint 为 S3 服务端点。
+// PublicURL() 优先使用 baseURL，为空时回退到 endpoint。
+func NewS3Path(bucket, key, baseURL, endpoint string) StoragePath {
+	return &s3Path{bucket: bucket, key: key, baseURL: baseURL, endpoint: endpoint}
 }
 
 // filePath 本地文件后端的 StoragePath 实现。

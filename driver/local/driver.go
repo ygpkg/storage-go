@@ -25,14 +25,14 @@ func init() { storage.Register(string(storage.DriverLocal), New) }
 
 // Config Local driver 独立配置。
 type Config struct {
-	BaseDir     string // 本地存储根目录
-	HTTPBaseURL string // 对外 HTTP 访问基础 URL
+	BaseDir string // 本地存储根目录
+	BaseURL string // 对外公共访问基础 URL
 }
 
 // Driver 本地磁盘存储驱动。
 type Driver struct {
 	baseDir  string          // 本地根目录
-	httpBase string          // 对外 HTTP 基础 URL，用于构建 PublicURL
+	baseURL  string          // 对外公共访问基础 URL，用于构建 PublicURL
 	keys     *keyLocks       // key 级别读写锁
 	mp       *multipartStore // 分片上传状态存储
 }
@@ -41,20 +41,20 @@ var _ storage.Storage = (*Driver)(nil)
 
 func New(cfg storage.Config) (storage.Storage, error) {
 	dCfg := Config{
-		BaseDir:     cfg.LocalDir,
-		HTTPBaseURL: cfg.HTTPBaseURL,
+		BaseDir: cfg.BaseDir,
+		BaseURL: cfg.BaseURL,
 	}
 	if dCfg.BaseDir == "" {
-		return nil, fmt.Errorf("%w: LocalDir is required for local driver", storage.ErrInvalidConfig)
+		return nil, fmt.Errorf("%w: BaseDir is required for local driver", storage.ErrInvalidConfig)
 	}
 	if err := os.MkdirAll(dCfg.BaseDir, 0o755); err != nil {
 		return nil, err
 	}
 	return &Driver{
-		baseDir:  dCfg.BaseDir,
-		httpBase: dCfg.HTTPBaseURL,
-		keys:     newKeyLocks(),
-		mp:       newMultipartStore(dCfg.BaseDir),
+		baseDir: dCfg.BaseDir,
+		baseURL: dCfg.BaseURL,
+		keys:    newKeyLocks(),
+		mp:      newMultipartStore(dCfg.BaseDir),
 	}, nil
 }
 
@@ -63,7 +63,7 @@ func (d *Driver) dataPath(bucket, key string) string {
 }
 
 func (d *Driver) newPath(bucket, key string) storage.StoragePath {
-	return storage.NewLocalPath(filepath.Join(d.baseDir, "data"), bucket, key, d.httpBase)
+	return storage.NewLocalPath(filepath.Join(d.baseDir, "data"), bucket, key, d.baseURL)
 }
 
 func sortLocks(a, b string) (first, second string) {
@@ -159,8 +159,14 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, body io.Read
 		return nil, err
 	}
 	return &storage.PutObjectResult{
-		Path: d.newPath(bucket, key),
-		ETag: meta.ETag,
+		ObjectInfo: storage.ObjectInfo{
+			Path:         d.newPath(bucket, key),
+			Size:         meta.Size,
+			ETag:         meta.ETag,
+			ContentType:  meta.ContentType,
+			LastModified: meta.LastModified,
+			Metadata:     meta.Metadata,
+		},
 	}, nil
 }
 
@@ -198,12 +204,14 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...stor
 		reader = newRangeReader(f, o.ByteRange.Start, o.ByteRange.End, meta.Size)
 	}
 	return &storage.GetObjectResult{
-		Path:          d.newPath(bucket, key),
-		ContentType:   meta.ContentType,
-		ContentLength: meta.Size,
-		ETag:          meta.ETag,
-		LastModified:  meta.LastModified,
-		Body:          reader,
+		Body: reader,
+		ObjectInfo: storage.ObjectInfo{
+			Path:         d.newPath(bucket, key),
+			Size:         meta.Size,
+			ETag:         meta.ETag,
+			ContentType:  meta.ContentType,
+			LastModified: meta.LastModified,
+		},
 	}, nil
 }
 
