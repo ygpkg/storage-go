@@ -3,7 +3,6 @@ package storage_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -29,37 +28,24 @@ func loadConfig() (storage.DriverType, storage.Config, string) {
 		driverName = "local"
 	}
 
-	file, err := os.ReadFile(".storage_test.json")
-	if err != nil {
-		panic("cannot read .storage_test.json: " + err.Error())
-	}
-
-	var allConfigs map[string]map[string]string
-	if err := json.Unmarshal(file, &allConfigs); err != nil {
-		panic("invalid .storage_test.json: " + err.Error())
-	}
-
-	dc, ok := allConfigs[driverName]
-	if !ok {
-		panic("unknown driver: " + driverName)
-	}
-
 	cfg := storage.Config{
-		Endpoint:  dc["endpoint"],
-		Region:    dc["region"],
-		AccessKey: dc["access_key"],
-		SecretKey: dc["secret_key"],
-		BaseDir:   dc["base_dir"],
-		BaseURL:   dc["base_url"],
+		Endpoint:  os.Getenv("STORAGE_ENDPOINT"),
+		Region:    os.Getenv("STORAGE_REGION"),
+		AccessKey: os.Getenv("STORAGE_ACCESS_KEY"),
+		SecretKey: os.Getenv("STORAGE_SECRET_KEY"),
+		BaseDir:   os.Getenv("STORAGE_BASE_DIR"),
+		BaseURL:   os.Getenv("STORAGE_BASE_URL"),
 	}
 
-	return storage.DriverType(driverName), cfg, dc["bucket"]
+	bucket := os.Getenv("STORAGE_BUCKET")
+
+	return storage.DriverType(driverName), cfg, bucket
 }
 
 func TestMain(m *testing.M) {
 	driverType, cfg, bucketName := loadConfig()
 	if bucketName == "" {
-		panic("bucket is required in .storage_test.json")
+		panic("bucket is required: set STORAGE_BUCKET env or configure .env.test")
 	}
 	bucket = bucketName
 	s, err := storage.New(driverType, cfg)

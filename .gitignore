@@ -17,6 +17,7 @@ go.work.sum
 
 # Test config (contains secrets)
 .storage_test.json
+.env.test
 
 # Docs
 docs/superpowers/
