@@ -3,7 +3,7 @@ package minio
 
 import (
 	"github.com/ygpkg/storage-go"
-	"github.com/ygpkg/storage-go/driver/internal/s3driver"
+	"github.com/ygpkg/storage-go/driver/s3driver"
 )
 
 func init() { storage.Register(string(storage.DriverMinio), New) }

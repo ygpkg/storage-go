@@ -220,9 +220,11 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 	input := &s3.ListObjectsV2Input{
 		Bucket:            aws.String(bucket),
 		Prefix:            aws.String(prefix),
-		MaxKeys:           aws.Int32(int32(o.MaxKeys)),
 		StartAfter:        strPtr(o.StartAfter),
 		ContinuationToken: strPtr(o.ContinuationToken),
+	}
+	if o.MaxKeys > 0 {
+		input.MaxKeys = aws.Int32(int32(o.MaxKeys))
 	}
 	if !o.Recursive {
 		input.Delimiter = aws.String("/")

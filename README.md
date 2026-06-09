@@ -124,6 +124,35 @@ go test ./...
 - SeaweedFS: `TEST_WEEDFS_ENDPOINT` / `TEST_WEEDFS_ACCESS_KEY` / `TEST_WEEDFS_SECRET_KEY`
 - Local: 自动运行（无需外部服务）
 
+### 通用测试 (根目录 storage_test.go)
+
+根目录测试通过配置文件管理多驱动配置，无需手动修改代码。
+
+**首次使用：**
+
+```bash
+cp .storage_test.json.example .storage_test.json
+# 编辑 .storage_test.json，填入各驱动的真实密钥
+```
+
+**运行测试：**
+
+```bash
+# local 驱动（默认，VSCode 中可直接点 run test）
+go test -v .
+
+# 指定其他驱动
+STORAGE_DRIVER=minio go test -v .
+STORAGE_DRIVER=cos go test -v .
+STORAGE_DRIVER=seaweedfs go test -v .
+
+# 只跑某个用例
+STORAGE_DRIVER=minio go test -v -run TestPutGet .
+```
+
+- 配置文件 `.storage_test.json` 已加入 `.gitignore`，不会泄露密钥
+- 不设 `STORAGE_DRIVER` 时默认使用 `local` 驱动
+
 ## 许可
 
 MIT

@@ -2,14 +2,38 @@
 package seaweedfs
 
 import (
+	"context"
+	"io"
+
 	"github.com/ygpkg/storage-go"
-	"github.com/ygpkg/storage-go/driver/internal/s3driver"
+	"github.com/ygpkg/storage-go/driver/s3driver"
 )
 
 func init() { storage.Register(string(storage.DriverSeaweedFS), New) }
 
-var _ storage.Storage = (*s3driver.Driver)(nil)
+var _ storage.Storage = (*driver)(nil)
+
+type driver struct {
+	*s3driver.Driver
+}
 
 func New(cfg storage.Config) (storage.Storage, error) {
-	return s3driver.New(cfg)
+	sd, err := s3driver.New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &driver{Driver: sd.(*s3driver.Driver)}, nil
+}
+
+func (d *driver) PutObject(ctx context.Context, bucket, key string, body io.Reader, opts ...storage.PutOption) (*storage.PutObjectResult, error) {
+	o := &storage.PutOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	if o.IfNotExists {
+		if _, err := d.HeadObject(ctx, bucket, key); err == nil {
+			return nil, storage.ErrAlreadyExists
+		}
+	}
+	return d.Driver.PutObject(ctx, bucket, key, body, opts...)
 }

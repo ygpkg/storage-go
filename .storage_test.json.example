@@ -1,0 +1,27 @@
+{
+  "local": {
+    "base_dir": "/tmp/storage-go-test",
+    "bucket": "test"
+  },
+  "minio": {
+    "endpoint": "",
+    "region": "",
+    "access_key": "",
+    "secret_key": "",
+    "bucket": ""
+  },
+  "seaweedfs": {
+    "endpoint": "",
+    "region": "",
+    "access_key": "",
+    "secret_key": "",
+    "bucket": ""
+  },
+  "cos": {
+    "endpoint": "",
+    "region": "",
+    "access_key": "",
+    "secret_key": "",
+    "bucket": ""
+  }
+}
