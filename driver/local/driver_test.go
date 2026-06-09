@@ -5,6 +5,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -386,5 +389,225 @@ func TestDriverConcurrentDifferentKeys(t *testing.T) {
 	}
 	if len(out.Contents) != 20 {
 		t.Errorf("Contents = %d, want 20", len(out.Contents))
+	}
+}
+
+func TestDriverCopySameSourceIsNoop(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+
+	_, err := d.PutObject(ctx, "bkt", "same.txt", bytes.NewReader([]byte("payload")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.CopyObject(ctx, "bkt", "same.txt", "bkt", "same.txt"); err != nil {
+		t.Fatalf("CopyObject same source/destination = %v", err)
+	}
+
+	obj, err := d.GetObject(ctx, "bkt", "same.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer obj.Body.Close()
+	data, _ := io.ReadAll(obj.Body)
+	if string(data) != "payload" {
+		t.Errorf("body = %q, want payload", data)
+	}
+}
+
+func TestDriverListPaginationUsesObjectKeys(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+	for _, key := range []string{"a", "b", "c"} {
+		_, err := d.PutObject(ctx, "bkt", key, bytes.NewReader([]byte(key)))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	page1, err := d.ListObjects(ctx, "bkt", "", storage.WithRecursive(true), storage.WithMaxKeys(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page1.Contents) != 1 || page1.Contents[0].Path.Key() != "a" {
+		t.Fatalf("page1 contents = %+v, want [a]", page1.Contents)
+	}
+	if !page1.IsTruncated {
+		t.Fatal("page1 should be truncated")
+	}
+	if page1.NextContinuationToken != "a" {
+		t.Fatalf("page1 token = %q, want a", page1.NextContinuationToken)
+	}
+
+	page2, err := d.ListObjects(ctx, "bkt", "", storage.WithRecursive(true), storage.WithMaxKeys(1), storage.WithContinuationToken(page1.NextContinuationToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page2.Contents) != 1 || page2.Contents[0].Path.Key() != "b" {
+		t.Fatalf("page2 contents = %+v, want [b]", page2.Contents)
+	}
+	if page2.NextContinuationToken != "b" {
+		t.Fatalf("page2 token = %q, want b", page2.NextContinuationToken)
+	}
+
+	page3, err := d.ListObjects(ctx, "bkt", "", storage.WithRecursive(true), storage.WithMaxKeys(1), storage.WithContinuationToken(page2.NextContinuationToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page3.Contents) != 1 || page3.Contents[0].Path.Key() != "c" {
+		t.Fatalf("page3 contents = %+v, want [c]", page3.Contents)
+	}
+	if page3.IsTruncated {
+		t.Fatal("page3 should not be truncated")
+	}
+}
+
+func TestDriverMultipartRejectsMismatchedUploadTarget(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+
+	uploadID, err := d.CreateMultipartUpload(ctx, "bkt", "source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.UploadPart(ctx, "bkt", "source", uploadID, 1, bytes.NewReader([]byte("x")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = d.CompleteMultipartUpload(ctx, "bkt", "other", uploadID, []storage.CompletedPart{{PartNumber: 1, ETag: "part-1"}})
+	if err == nil {
+		t.Fatal("expected mismatched upload target to fail")
+	}
+}
+
+func TestDriverMultipartCompleteUsesProvidedPartOrder(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+
+	uploadID, err := d.CreateMultipartUpload(ctx, "bkt", "ordered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.UploadPart(ctx, "bkt", "ordered", uploadID, 1, bytes.NewReader([]byte("one-")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.UploadPart(ctx, "bkt", "ordered", uploadID, 2, bytes.NewReader([]byte("two")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = d.CompleteMultipartUpload(ctx, "bkt", "ordered", uploadID, []storage.CompletedPart{{PartNumber: 2, ETag: "part-2"}, {PartNumber: 1, ETag: "part-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	obj, err := d.GetObject(ctx, "bkt", "ordered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer obj.Body.Close()
+	data, _ := io.ReadAll(obj.Body)
+	if string(data) != "twoone-" {
+		t.Fatalf("merged body = %q, want twoone-", data)
+	}
+}
+
+func TestDriverUsesHTTPBaseURLForPublicURL(t *testing.T) {
+	s, err := New(storage.Config{LocalDir: t.TempDir(), HTTPBaseURL: "https://cdn.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := s.(*Driver)
+	ctx := context.Background()
+	res, err := d.PutObject(ctx, "bkt", "asset.png", bytes.NewReader([]byte("x")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Path.PublicURL(); got != "https://cdn.example.com/bkt/asset.png" {
+		t.Fatalf("PublicURL = %q, want https://cdn.example.com/bkt/asset.png", got)
+	}
+}
+
+func TestDriverListStartAfterSkipsEarlierKeys(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+	for _, key := range []string{"a", "b", "c"} {
+		_, err := d.PutObject(ctx, "bkt", key, bytes.NewReader([]byte(key)))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out, err := d.ListObjects(ctx, "bkt", "", storage.WithRecursive(true), storage.WithStartAfter("a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Contents) != 2 {
+		t.Fatalf("len(contents) = %d, want 2", len(out.Contents))
+	}
+	keys := []string{out.Contents[0].Path.Key(), out.Contents[1].Path.Key()}
+	if !slices.Equal(keys, []string{"b", "c"}) {
+		t.Fatalf("keys = %v, want [b c]", keys)
+	}
+}
+
+func TestDriverDeleteMissingObjectIsSuccess(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+
+	if err := d.DeleteObject(ctx, "bkt", "nope.txt"); err != nil {
+		t.Fatalf("DeleteObject missing = %v, want nil", err)
+	}
+}
+
+func TestDriverDeleteSurfacesRemoveFailure(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+	if _, err := d.PutObject(ctx, "bkt", "stuck.txt", bytes.NewReader([]byte("x"))); err != nil {
+		t.Fatal(err)
+	}
+
+	bucketDir := filepath.Join(d.baseDir, "data", "bkt")
+	if err := os.Chmod(bucketDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(bucketDir, 0o755) })
+
+	err := d.DeleteObject(ctx, "bkt", "stuck.txt")
+	if err == nil {
+		t.Fatal("expected non-not-exist remove error, got nil")
+	}
+	if errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("err = %v, want underlying remove failure", err)
+	}
+}
+
+func TestDriverDeleteObjectsSurfacesBulkFailure(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+	if _, err := d.PutObject(ctx, "bkt", "stuck.txt", bytes.NewReader([]byte("x"))); err != nil {
+		t.Fatal(err)
+	}
+
+	bucketDir := filepath.Join(d.baseDir, "data", "bkt")
+	if err := os.Chmod(bucketDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(bucketDir, 0o755) })
+
+	err := d.DeleteObjects(ctx, "bkt", []string{"stuck.txt", "missing.txt"})
+	if err == nil {
+		t.Fatal("expected bulk error, got nil")
+	}
+	var bulk *storage.BulkDeleteError
+	if !errors.As(err, &bulk) {
+		t.Fatalf("err = %v, want *storage.BulkDeleteError", err)
+	}
+	if len(bulk.Failures) != 1 || bulk.Failures[0].Key != "stuck.txt" {
+		t.Fatalf("failures = %+v, want exactly stuck.txt", bulk.Failures)
 	}
 }

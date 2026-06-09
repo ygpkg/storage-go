@@ -3,13 +3,16 @@ package local
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +42,7 @@ var _ storage.Storage = (*Driver)(nil)
 func New(cfg storage.Config) (storage.Storage, error) {
 	dCfg := Config{
 		BaseDir:     cfg.LocalDir,
+		HTTPBaseURL: cfg.HTTPBaseURL,
 	}
 	if dCfg.BaseDir == "" {
 		return nil, fmt.Errorf("%w: LocalDir is required for local driver", storage.ErrInvalidConfig)
@@ -78,6 +82,11 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, body io.Read
 	if err := pathcheck.ValidateKey(key); err != nil {
 		return nil, err
 	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 	o := &storage.PutOptions{}
 	for _, opt := range opts {
 		opt(o)
@@ -113,6 +122,13 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, body io.Read
 	if err := f.Close(); err != nil {
 		os.Remove(tmp)
 		return nil, err
+	}
+	if o.ContentMD5 != "" {
+		actualMD5 := base64.StdEncoding.EncodeToString(hasher.Sum(nil))
+		if subtle.ConstantTimeCompare([]byte(actualMD5), []byte(o.ContentMD5)) != 1 {
+			os.Remove(tmp)
+			return nil, fmt.Errorf("content md5 mismatch")
+		}
 	}
 	if err := os.Rename(tmp, dataP); err != nil {
 		os.Remove(tmp)
@@ -202,8 +218,25 @@ func (d *Driver) DeleteObject(ctx context.Context, bucket, key string) error {
 	d.keys.lock(lockKey)
 	defer d.keys.unlock(lockKey)
 
-	_ = os.Remove(d.dataPath(bucket, key))
-	_ = os.Remove(metaPath(d.baseDir, bucket, key))
+	dataP := d.dataPath(bucket, key)
+	metaP := metaPath(d.baseDir, bucket, key)
+
+	dataExists := true
+	if _, err := os.Stat(dataP); err != nil {
+		if os.IsNotExist(err) {
+			dataExists = false
+		} else {
+			return err
+		}
+	}
+	if dataExists {
+		if err := os.Remove(dataP); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	if err := os.Remove(metaP); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return nil
 }
 
@@ -228,23 +261,32 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 	for _, opt := range opts {
 		opt(o)
 	}
-	if prefix == "" && o.StartAfter != "" && o.ContinuationToken == "" {
-		prefix = o.StartAfter
-	}
-	if o.ContinuationToken != "" {
-		prefix = o.ContinuationToken
-	}
-
 	lockKey := bucket + ":"
 	d.keys.rlock(lockKey)
 	defer d.keys.runlock(lockKey)
 
 	prefixDir := filepath.Join(d.baseDir, "data", bucket)
-	var contents []storage.ObjectInfo
-	common := map[string]struct{}{}
+	if _, err := os.Stat(prefixDir); err != nil {
+		if os.IsNotExist(err) {
+			return &storage.ListObjectsOutput{}, nil
+		}
+		return nil, err
+	}
+
+	type listEntry struct {
+		key  string
+		meta *metaFile
+	}
+
+	entries := make([]listEntry, 0)
+	common := make([]string, 0)
+	commonSet := map[string]struct{}{}
 
 	useDelimiter := !o.Recursive
-	var totalCount int64
+	marker := o.StartAfter
+	if o.ContinuationToken != "" {
+		marker = o.ContinuationToken
+	}
 
 	err := filepath.Walk(prefixDir, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -264,61 +306,86 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 		if prefix != "" && !strings.HasPrefix(relSlash, prefix) {
 			return nil
 		}
+		if marker != "" && relSlash <= marker {
+			return nil
+		}
 
 		if useDelimiter {
 			rest := relSlash[len(prefix):]
 			sepIdx := strings.IndexByte(rest, '/')
 			if sepIdx >= 0 {
 				commonPrefix := prefix + rest[:sepIdx+1]
-				if _, exists := common[commonPrefix]; !exists {
-					if o.MaxKeys > 0 && totalCount >= o.MaxKeys {
-						return nil
-					}
-					common[commonPrefix] = struct{}{}
-					totalCount++
+				if _, exists := commonSet[commonPrefix]; !exists {
+					commonSet[commonPrefix] = struct{}{}
+					common = append(common, commonPrefix)
 				}
-				return filepath.SkipDir
+				return nil
 			}
 		}
-
-		if o.MaxKeys > 0 && totalCount >= o.MaxKeys {
-			return nil
-		}
-		totalCount++
 
 		meta, err := readMeta(d.baseDir, bucket, relSlash)
 		if err != nil {
 			return nil
 		}
-		contents = append(contents, storage.ObjectInfo{
-			Path:         d.newPath(bucket, relSlash),
-			Size:         meta.Size,
-			ETag:         meta.ETag,
-			ContentType:  meta.ContentType,
-			LastModified: meta.LastModified,
-			Metadata:     meta.Metadata,
-		})
+		entries = append(entries, listEntry{key: relSlash, meta: meta})
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	commonPrefixes := make([]string, 0, len(common))
-	for c := range common {
-		commonPrefixes = append(commonPrefixes, c)
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].key < entries[j].key
+	})
+	sort.Strings(common)
+
+	items := make([]string, 0, len(entries)+len(common))
+	itemKind := make(map[string]bool, len(entries)+len(common))
+	entryByKey := make(map[string]listEntry, len(entries))
+	for _, entry := range entries {
+		items = append(items, entry.key)
+		itemKind[entry.key] = true
+		entryByKey[entry.key] = entry
+	}
+	for _, prefix := range common {
+		items = append(items, prefix)
+	}
+	sort.Strings(items)
+
+	limit := len(items)
+	truncated := false
+	if o.MaxKeys > 0 && int64(limit) > o.MaxKeys {
+		limit = int(o.MaxKeys)
+		truncated = true
+	}
+	selected := items[:limit]
+
+	contents := make([]storage.ObjectInfo, 0, len(selected))
+	commonPrefixes := make([]string, 0, len(selected))
+	for _, item := range selected {
+		if itemKind[item] {
+			entry := entryByKey[item]
+			contents = append(contents, storage.ObjectInfo{
+				Path:         d.newPath(bucket, entry.key),
+				Size:         entry.meta.Size,
+				ETag:         entry.meta.ETag,
+				ContentType:  entry.meta.ContentType,
+				LastModified: entry.meta.LastModified,
+				Metadata:     entry.meta.Metadata,
+			})
+			continue
+		}
+		commonPrefixes = append(commonPrefixes, item)
 	}
 
 	out := &storage.ListObjectsOutput{
 		Contents:       contents,
 		CommonPrefixes: commonPrefixes,
 	}
-	if o.MaxKeys > 0 && totalCount >= o.MaxKeys {
+	if truncated {
 		out.IsTruncated = true
-		if len(contents) > 0 {
-			out.NextContinuationToken = contents[len(contents)-1].Path.Key()
-		} else if len(commonPrefixes) > 0 {
-			out.NextContinuationToken = commonPrefixes[len(commonPrefixes)-1]
+		if len(selected) > 0 {
+			out.NextContinuationToken = selected[len(selected)-1]
 		}
 	}
 	return out, nil
@@ -345,10 +412,19 @@ func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, 
 }
 
 func (d *Driver) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, body io.Reader) (*storage.CompletedPart, error) {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
+		return nil, err
+	}
+	if err := pathcheck.ValidateKey(key); err != nil {
+		return nil, err
+	}
 	lockKey := bucket + ":" + key
 	d.keys.lock(lockKey)
 	defer d.keys.unlock(lockKey)
 
+	if _, err := d.mp.Validate(uploadID, bucket, key); err != nil {
+		return nil, err
+	}
 	if err := d.mp.WritePart(uploadID, partNumber, body, 0); err != nil {
 		return nil, err
 	}
@@ -366,7 +442,10 @@ func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key, uploa
 	d.keys.lock(lockKey)
 	defer d.keys.unlock(lockKey)
 
-	um := d.mp.UploadMeta(uploadID)
+	um, err := d.mp.Validate(uploadID, bucket, key)
+	if err != nil {
+		return err
+	}
 
 	tmpDir, err := os.MkdirTemp(d.baseDir, ".merge-*")
 	if err != nil {
@@ -374,7 +453,7 @@ func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key, uploa
 	}
 	defer os.RemoveAll(tmpDir)
 	mergeDst := filepath.Join(tmpDir, "obj")
-	if err := d.mp.Merge(uploadID, mergeDst); err != nil {
+	if err := d.mp.Merge(uploadID, mergeDst, parts); err != nil {
 		return err
 	}
 
@@ -404,9 +483,18 @@ func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key, uploa
 }
 
 func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	if err := pathcheck.ValidateBucket(bucket); err != nil {
+		return err
+	}
+	if err := pathcheck.ValidateKey(key); err != nil {
+		return err
+	}
 	lockKey := bucket + ":" + key
 	d.keys.lock(lockKey)
 	defer d.keys.unlock(lockKey)
+	if _, err := d.mp.Validate(uploadID, bucket, key); err != nil {
+		return err
+	}
 	return d.mp.Abort(uploadID)
 }
 
@@ -429,7 +517,7 @@ func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*storage.O
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("%w: %s", storage.ErrNotFound, key)
 		}
-		return nil, fmt.Errorf("%w: %s", storage.ErrNotFound, key)
+		return nil, err
 	}
 	return &storage.ObjectInfo{
 		Path:         d.newPath(bucket, key),
@@ -467,6 +555,12 @@ func (d *Driver) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, d
 
 	srcP := d.dataPath(srcBucket, srcKey)
 	dstP := d.dataPath(dstBucket, dstKey)
+	if srcBucket == dstBucket && srcKey == dstKey {
+		if _, err := os.Stat(srcP); err != nil {
+			return fmt.Errorf("%w: %s", storage.ErrNotFound, srcKey)
+		}
+		return nil
+	}
 
 	if _, err := os.Stat(srcP); err != nil {
 		return fmt.Errorf("%w: %s", storage.ErrNotFound, srcKey)

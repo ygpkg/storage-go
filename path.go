@@ -81,7 +81,7 @@ func (p *filePath) PublicURL() string {
 func (p *filePath) Scheme() string { return SchemeFile }
 func (p *filePath) IsLocal() bool  { return true }
 func (p *filePath) Bucket() string { return "" }
-func (p *filePath) Key() string    { return p.absPath() }
+func (p *filePath) Key() string    { return p.key }
 
 func (p *filePath) absPath() string {
 	return fmt.Sprintf("%s/%s/%s", strings.TrimRight(p.absDir, "/"), p.bucket, p.key)
