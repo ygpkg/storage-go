@@ -9,12 +9,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/insmtx/storage-go"
+	"github.com/ygpkg/storage-go"
 )
 
 func newTestDriver(t *testing.T) *Driver {
 	t.Helper()
-	d, err := New(storage.Config{RootDir: t.TempDir()})
+	d, err := New(storage.Config{LocalDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +23,7 @@ func newTestDriver(t *testing.T) *Driver {
 
 func newTestStorage(t *testing.T) storage.Storage {
 	t.Helper()
-	d, err := New(storage.Config{RootDir: t.TempDir()})
+	d, err := New(storage.Config{LocalDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func newTestStorage(t *testing.T) storage.Storage {
 func TestDriverNewRequiresBaseDir(t *testing.T) {
 	_, err := New(storage.Config{})
 	if err == nil {
-		t.Fatal("expected error for empty RootDir")
+		t.Fatal("expected error for empty LocalDir")
 	}
 	if !errors.Is(err, storage.ErrInvalidConfig) {
 		t.Errorf("err = %v, want ErrInvalidConfig", err)
@@ -41,11 +41,11 @@ func TestDriverNewRequiresBaseDir(t *testing.T) {
 }
 
 func TestDriverRegistersSelf(t *testing.T) {
-	_, err := New(storage.Config{RootDir: t.TempDir()})
+	_, err := New(storage.Config{LocalDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := storage.New("local", storage.Config{RootDir: t.TempDir()})
+	s, err := storage.New("local", storage.Config{LocalDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("storage.New(local) = %v", err)
 	}

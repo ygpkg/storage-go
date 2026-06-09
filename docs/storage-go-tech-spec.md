@@ -19,7 +19,7 @@ storage-go 是一个统一的对象存储抽象库，对外暴露一套与 S3 �
 | S3 语义对齐 | 接口方法名与语义对标 S3 API，入参以 bucket、key 分开传递 |
 | 按需引入 | 调用方通过 blank import 引入所需 driver，未使用的后端不会被编译进二进制 |
 | 返回值携带路径语义 | 返回值中的 StoragePath interface 提供多种路径视图，便于序列化与跨服务传递 |
-| 统一入口 | New(Config) 构建 Client，driver 通过 init() 自动注册 |
+| 统一入口 | New(name, Config) 构建 Storage，driver 通过 init() 自动注册 |
 | 无循环依赖 | 类型定义与注册机制均在根包，依赖图为单向 DAG |
 | 错误统一 | sentinel error + errors.Is 屏蔽底层错误码差异 |
 
@@ -31,23 +31,21 @@ storage-go 是一个统一的对象存储抽象库，对外暴露一套与 S3 �
 
 ```
 storage-go/
-├── interface.go         # 接口定义：Base / Multipart / Ext，由三者组合成 Storage
-├── path.go              # StoragePath interface 及 s3Path / localPath 实现 + NewS3Path / NewLocalPath 工厂
-├── errors.go            # sentinel error
-├── options.go           # PutOption / GetOption / ListOption
-├── types.go             # ObjectInfo / PutObjectResult / GetObjectResult / ListObjectsOutput 等
-├── registry.go          # driver 注册表，Register() / LookupDriver() / Drivers()
-├── client.go            # 已移除
-├── config.go            # Config 定义与 New() 工厂
+├── storage.go          # 接口定义：Base / Multipart / Ext，由三者组合成 Storage
+├── path.go             # StoragePath interface 及 s3Path / filePath 实现 + NewS3Path / NewLocalPath 工厂
+├── types.go            # sentinel error + ObjectInfo / PutObjectResult / GetObjectResult / ListObjectsOutput 等公共类型
+├── options.go          # PutOption / GetOption / ListOption
+├── registry.go         # driver 注册表，Register() / LookupDriver() / Drivers()
+├── config.go           # Config 定义与 New() 工厂
 
 ├── driver/
-│   ├── minio/driver.go   # init() 中调用 storage.Register("minio", ...)
-│   ├── cos/driver.go     # COS wrapCosErr 留在包内
-│   ├── seaweedfs/driver.go # 独立 driver，通过 s3base 共享 minio-go SDK
-│   ├── local/driver.go   # sidecar 元数据（BaseDir/data + BaseDir/meta）
+│   ├── minio/driver.go  # init() 中调用 storage.Register("minio", ...)
+│   ├── cos/driver.go    # COS driver，复用 s3driver 统一逻辑
+│   ├── seaweedfs/driver.go # SeaweedFS driver，通过 s3driver 共享 S3 兼容逻辑
+│   ├── local/driver.go  # sidecar 元数据（BaseDir/data + BaseDir/meta）
 │   └── internal/
-│       ├── s3base/        # ≥2 driver 共用的 S3 兼容逻辑（NewMinioClient / WrapMinioErr）
-│       └── pathcheck/     # 桶名 key 名校验
+│       ├── s3driver/     # ≥2 driver 共用的 S3 兼容逻辑（基于 aws-sdk-go-v2）
+│       └── pathcheck/    # 桶名 key 名校验
 
 └── testkit/
     ├── suite.go         # 通用 driver 测试套件
@@ -59,8 +57,8 @@ storage-go/
 | 包 | 允许 import | 禁止 import |
 | --- | --- | --- |
 | 根包（storage-go） | 标准库、golang.org/x/sync | driver/*（driver 通过注册机制反向注入） |
-| driver/* | 根包（仅用于调用 Register）、各自 SDK、标准库、s3base/pathcheck | 其他 driver |
-| driver/internal/s3base | 根包类型、minio-go SDK、标准库 | driver/*（被 driver 引用，不反向引用） |
+| driver/* | 根包（仅用于调用 Register）、各自 SDK、标准库、s3driver/pathcheck | 其他 driver |
+| driver/internal/s3driver | 根包类型、aws-sdk-go-v2、标准库 | driver/*（被 driver 引用，不反向引用） |
 | driver/internal/pathcheck | 根包类型、标准库 | driver/* |
 | testkit | 根包、标准库 | driver/* |
 
@@ -76,8 +74,8 @@ func Register(name string, factory DriverFactory) { ... }
 func init() { storage.Register("minio", func(cfg storage.Config) (storage.Storage, error) { ... }) }
 
 // 调用方
-import storage "github.com/yourorg/storage-go"
-import _ "github.com/yourorg/storage-go/driver/minio"
+import storage "github.com/ygpkg/storage-go"
+import _ "github.com/ygpkg/storage-go/driver/minio"
 
 client, err := storage.New("minio", storage.Config{...})
 ```
@@ -156,7 +154,7 @@ type Base interface {
 
 // 分片上传
 type Multipart interface {
-    CreateMultipartUpload(ctx, bucket, key string, opts ...PutOption) (uploadID string, err error)
+    CreateMultipartUpload(ctx, bucket, key string, opts ...PutOption) (string, error)
     UploadPart(ctx, bucket, key, uploadID string, partNumber int, body io.Reader) (*CompletedPart, error)
     CompleteMultipartUpload(ctx, bucket, key, uploadID string, parts []CompletedPart) error
     AbortMultipartUpload(ctx, bucket, key, uploadID string) error
@@ -194,7 +192,7 @@ type Storage interface {
 ```go
 type PutObjectResult struct {
     Path StoragePath // 写入后对象的完整路径信息
-    ETag string      // 对象内容唯一标识，driver 实现须保留双引号
+    ETag string      // 对象内容唯一标识；S3 后端通常带双引号（如 "abc123"），Local driver 为 hex MD5 不带双引号
 }
 
 type GetObjectResult struct {
@@ -272,6 +270,7 @@ WithContentType(ct string) PutOption
 WithContentMD5(md5 string) PutOption         // 服务端内容校验
 WithMetadata(m map[string]string) PutOption
 WithStorageClass(sc string) PutOption        // STANDARD | IA | ARCHIVE
+WithIfNotExists() PutOption                  // 仅当 key 不存在时才写入
 ```
 
 ### GetOption
@@ -294,8 +293,6 @@ WithStartAfter(k string) ListOption
 
 ```go
 type Config struct {
-    Driver DriverType // "minio" | "cos" | "seaweedfs" | "local"
-
     // S3 兼容后端通用字段
     Endpoint     string
     Region       string
@@ -305,7 +302,7 @@ type Config struct {
     UseSSL       bool
 
     // 本地磁盘后端
-    RootDir     string // bucket 映射为 data/ 下的子目录
+    LocalDir    string // bucket 映射为 data/ 下的子目录
     HTTPBaseURL string // 配置后 StoragePath.PublicURL() 返回 HTTP URL
 
     MaxRetries   int           // 默认 3
@@ -314,16 +311,16 @@ type Config struct {
 }
 ```
 
-> 字段名变更：`Backend` → `Driver`。`Backend` 偏“后端位置/基础设施”语义，但本字段实际表达的是“选用哪个 driver 实现”，`Driver` 更准确。常量名同步由 `BackendMinIO/BackendCOS/BackendSeaweedFS/BackendLocal` 调整为 `DriverMinio/DriverCOS/DriverSeaweedFS/DriverLocal`。
+> 驱动选择通过 `New("driver-name", Config{...})` 的第一个参数 `name` 传入，`Config` 结构体不包含 `Driver` 字段。常量 `DriverMinio`/`DriverCOS`/`DriverSeaweedFS`/`DriverLocal` 的类型为 `DriverType`（`string` 的命名类型），可显式用 `string(...)` 转换后传入。
 
-> Bucket 通过 Config.Bucket 传入，调用方直接使用 Storage 接口，每次调用需要传入 bucket 和 key。
+> New 的签名为 `New(name string, cfg Config) (Storage, error)`。name 为空时返回 `ErrInvalidConfig`。
 
 ## 九、driver 实现规范
 
 - 每个 driver 包对外只暴露内部的 `New(storage.Config)` 函数，并在 `init()` 中向主包注册
 - 只 import 根包（仅用于调用 Register）和各自的 SDK，以及标准库
 - 返回值中的 StoragePath 由 driver 从入参 bucket、key 直接构造，不经过字符串解析
-- ETag 必须保留 S3 规范要求的双引号（如 `"abc123"`），各 SDK 行为不一致时须手动补全
+- ETag 格式：S3 兼容后端（MinIO/COS/SeaweedFS）通过 aws-sdk-go-v2 返回原始 ETag（通常带双引号如 `"abc123"`）；Local driver 使用 hex 编码的 MD5，不带双引号
 - 错误统一通过 `fmt.Errorf("%w", ErrXxx)` 包装为 sentinel error
 
 ```go
@@ -331,7 +328,7 @@ func (d *driver) PutObject(...) (*storage.PutObjectResult, error) {
     // ...
     return &storage.PutObjectResult{
         Path: storage.NewS3Path(bucket, key, d.cfg.Endpoint),
-        ETag: info.ETag,
+        ETag: aws.ToString(output.ETag),
     }, nil
 }
 
@@ -382,12 +379,12 @@ Base / Multipart 子接口保持原子性（每个方法对应一次独立的存
 
 ## 十二、Local Driver 实现思路
 
-Local Driver 将本地文件系统模拟为 S3 兼容后端。bucket 映射为 RootDir/data/ 下的子目录，key 映射为该子目录下的相对文件路径。**元数据采用 sidecar 方案**（独立 JSON 文件），不依赖 xattr，跨平台兼容。
+Local Driver 将本地文件系统模拟为 S3 兼容后端。bucket 映射为 LocalDir/data/ 下的子目录，key 映射为该子目录下的相对文件路径。**元数据采用 sidecar 方案**（独立 JSON 文件），不依赖 xattr，跨平台兼容。
 
 ### 12.1 路径与元数据布局
 
 ```
-RootDir      = /data/storage
+LocalDir     = /data/storage
 HTTPBaseURL  = http://localhost:8080 （可选）
 bucket       = avatars
 key          = user/123.png
@@ -405,7 +402,7 @@ sidecar 方案优先于 xattr 的理由：
 ```
 Path.URI():    file:///data/storage/data/avatars/user/123.png
 Path.Path():   /data/storage/data/avatars/user/123.png
-Path.PublicURL(): http://localhost:8080/data/avatars/user/123.png
+Path.PublicURL(): http://localhost:8080/avatars/user/123.png
 ```
 
 ### 12.2 基础操作实现
@@ -424,7 +421,7 @@ Path.PublicURL(): http://localhost:8080/data/avatars/user/123.png
 用临时目录按约定结构模拟 S3 分片语义：
 
 ```
-{RootDir}/.multipart/{uploadID}/part-{partNumber:04d}
+{LocalDir}/.multipart/{uploadID}/part-{partNumber:04d}
 ```
 
 | 阶段 | 实现 | 说明 |
@@ -436,7 +433,7 @@ Path.PublicURL(): http://localhost:8080/data/avatars/user/123.png
 
 ## 十三、testkit
 
-testkit 只 import 根包，不 import 任何具体 driver。`RunDriverSuite` 对任意 `Storage` 实现运行完整行为测试：
+testkit 只 import 根包，不 import 任何具体 driver。`RunSuite` 对任意 `Storage` 实现运行完整行为测试：
 
 - PutObject / GetObject roundtrip 验证路径与内容
 - GetObject not found 验证 ErrNotFound
@@ -453,11 +450,11 @@ testkit 只 import 根包，不 import 任何具体 driver。`RunDriverSuite` �
 
 | 组件 | 选型 | 说明 |
 | --- | --- | --- |
-| MinIO driver | github.com/minio/minio-go/v7 | 官方 SDK，S3v4 签名，原生分片支持 |
-| COS driver | github.com/tencentyun/cos-go-sdk-v5 | 官方 SDK，S3 兼容接口 |
-| SeaweedFS driver | github.com/minio/minio-go/v7 | 独立 driver，通过 s3base 共享 minio-go SDK，不做嵌入 |
+| MinIO driver | github.com/aws/aws-sdk-go-v2/service/s3 | AWS S3 SDK v2，统一 S3 兼容后端的 HTTP 客户端与签名 |
+| COS driver | github.com/aws/aws-sdk-go-v2/service/s3 | 复用 S3 SDK v2，通过 s3driver 共享解析与封装逻辑 |
+| SeaweedFS driver | github.com/aws/aws-sdk-go-v2/service/s3 | 复用 S3 SDK v2，通过 s3driver 共享解析与封装逻辑 |
 | Local driver | 标准库 os / io | 无额外依赖，分片用临时文件模拟 |
-| 测试 | testing + github.com/stretchr/testify | 断言与 suite |
+| 测试 | testing（标准库） | 无第三方测试框架依赖 |
 
 ## 十五、关键风险与应对
 
@@ -472,7 +469,7 @@ testkit 只 import 根包，不 import 任何具体 driver。`RunDriverSuite` �
 | Local Presign | 本地文件无法生成签名 URL | PresignGetObject / PresignPutObject 明确返回 ErrNotSupported，调用方 errors.Is 后降级 |
 | Local 元数据适配性 | xattr 在 FAT32/NFS/overlay 文件系统上不可用 | 采用 sidecar 方案（BaseDir/meta/sha1.json），跨平台零依赖 |
 | StoragePath 比较 | interface 不可直接用 `==` 比较 | 文档明确说明统一使用 `a.URI() == b.URI()` |
-| UploadPart ETag 双引号 | S3 规范要求 ETag 保留双引号，各 SDK 行为不一致 | driver 实现规范明确要求统一保留双引号，testkit 覆盖校验 |
+| UploadPart ETag 格式 | S3 兼容后端返回带双引号的 ETag，Local driver 返回不带双引号的 hex MD5 | 调用方不应跨后端比对 ETag；如需内容校验，使用 CRC32C 独立计算 |
 
 ## 十六、里程碑
 

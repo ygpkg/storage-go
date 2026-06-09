@@ -1,6 +1,7 @@
 package local
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/hex"
@@ -13,35 +14,36 @@ import (
 	"sync"
 	"time"
 
-	"github.com/insmtx/storage-go"
-	"github.com/insmtx/storage-go/driver/internal/pathcheck"
+	"github.com/ygpkg/storage-go"
+	"github.com/ygpkg/storage-go/driver/internal/pathcheck"
 )
 
 const DriverName = "local"
 
 func init() { storage.Register(DriverName, New) }
 
+// Config Local driver 独立配置。
 type Config struct {
-	BaseDir     string
-	HTTPBaseURL string
+	BaseDir     string // 本地存储根目录
+	HTTPBaseURL string // 对外 HTTP 访问基础 URL
 }
 
+// Driver 本地磁盘存储驱动。
 type Driver struct {
-	baseDir  string
-	httpBase string
-	keys     *keyLocks
-	mp       *multipartStore
+	baseDir  string          // 本地根目录
+	httpBase string          // 对外 HTTP 基础 URL，用于构建 PublicURL
+	keys     *keyLocks       // key 级别读写锁
+	mp       *multipartStore // 分片上传状态存储
 }
 
 var _ storage.Storage = (*Driver)(nil)
 
 func New(cfg storage.Config) (storage.Storage, error) {
 	dCfg := Config{
-		BaseDir:     cfg.RootDir,
-		HTTPBaseURL: cfg.HTTPBaseURL,
+		BaseDir:     cfg.LocalDir,
 	}
 	if dCfg.BaseDir == "" {
-		return nil, fmt.Errorf("%w: RootDir is required for local driver", storage.ErrInvalidConfig)
+		return nil, fmt.Errorf("%w: LocalDir is required for local driver", storage.ErrInvalidConfig)
 	}
 	if err := os.MkdirAll(dCfg.BaseDir, 0o755); err != nil {
 		return nil, err
@@ -155,7 +157,10 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...stor
 	if err := pathcheck.ValidateKey(key); err != nil {
 		return nil, err
 	}
-	_ = opts
+	o := &storage.GetOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
 
 	lockKey := bucket + ":" + key
 	d.keys.rlock(lockKey)
@@ -169,16 +174,22 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...stor
 		}
 		return nil, err
 	}
+	var reader io.ReadCloser
 	f, err := os.Open(dataP)
 	if err != nil {
 		return nil, err
+	}
+	reader = f
+	if o.ByteRange != nil {
+		reader = newRangeReader(f, o.ByteRange.Start, o.ByteRange.End, meta.Size)
 	}
 	return &storage.GetObjectResult{
 		Path:          d.newPath(bucket, key),
 		ContentType:   meta.ContentType,
 		ContentLength: meta.Size,
 		ETag:          meta.ETag,
-		Body:          f,
+		LastModified:  meta.LastModified,
+		Body:          reader,
 	}, nil
 }
 
@@ -219,8 +230,11 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 	for _, opt := range opts {
 		opt(o)
 	}
-	if prefix == "" && o.StartAfter != "" {
+	if prefix == "" && o.StartAfter != "" && o.ContinuationToken == "" {
 		prefix = o.StartAfter
+	}
+	if o.ContinuationToken != "" {
+		prefix = o.ContinuationToken
 	}
 
 	lockKey := bucket + ":"
@@ -512,9 +526,10 @@ func (d *Driver) PresignPutObject(ctx context.Context, bucket, key string, ttl t
 
 // ---------- keyLocks ----------
 
+// keyLocks 按 key 粒度的读写锁映射表。
 type keyLocks struct {
-	mu sync.Mutex
-	m  map[string]*sync.RWMutex
+	mu sync.Mutex            // 保护 m 的互斥锁
+	m  map[string]*sync.RWMutex // key -> 读写锁映射
 }
 
 func newKeyLocks() *keyLocks { return &keyLocks{m: map[string]*sync.RWMutex{}} }
@@ -549,5 +564,41 @@ func computeETag(dataPath string) (string, int64, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), n, nil
 }
+
+// rangeReader 从底层 Reader 中截取 [start, end] 闭区间的字节。
+type rangeReader struct {
+	rc    io.ReadCloser // 底层 Reader
+	pos   int64         // 当前读取位置
+	end   int64         // 结束字节偏移（包含）
+	start int64         // 起始字节偏移（包含）
+}
+
+func newRangeReader(rc io.ReadCloser, start, end, totalSize int64) io.ReadCloser {
+	if end >= totalSize {
+		end = totalSize - 1
+	}
+	if start > end {
+		return io.NopCloser(bytes.NewReader(nil))
+	}
+	if s, ok := rc.(io.Seeker); ok {
+		s.Seek(start, io.SeekStart)
+	}
+	return &rangeReader{rc: rc, pos: start, end: end, start: start}
+}
+
+func (r *rangeReader) Read(p []byte) (int, error) {
+	if r.pos > r.end {
+		return 0, io.EOF
+	}
+	maxRead := r.end - r.pos + 1
+	if int64(len(p)) > maxRead {
+		p = p[:maxRead]
+	}
+	n, err := r.rc.Read(p)
+	r.pos += int64(n)
+	return n, err
+}
+
+func (r *rangeReader) Close() error { return r.rc.Close() }
 
 var _ = errors.New

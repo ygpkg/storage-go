@@ -14,18 +14,20 @@ import (
 
 const multipartDir = ".multipart"
 
+// multipartStore 本地分片上传状态存储。
 type multipartStore struct {
-	baseDir string
-	mu      sync.Mutex
-	active  map[string]*uploadMeta
+	baseDir string                 // 分片临时文件根目录
+	mu      sync.Mutex            // 保护 active 的互斥锁
+	active  map[string]*uploadMeta // uploadID -> 上传元数据
 }
 
+// uploadMeta 单个分片上传的元数据。
 type uploadMeta struct {
-	Bucket      string
-	Key         string
-	ContentType string
-	Metadata    map[string]string
-	CreatedAt   time.Time
+	Bucket      string            // 存储桶名称
+	Key         string            // 对象 key
+	ContentType string            // 对象 Content-Type
+	Metadata    map[string]string // 对象自定义元数据
+	CreatedAt   time.Time         // 上传创建时间
 }
 
 func newMultipartStore(baseDir string) *multipartStore {

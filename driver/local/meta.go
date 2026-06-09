@@ -10,15 +10,16 @@ import (
 	"time"
 )
 
+// metaFile 本地对象元数据持久化结构。
 type metaFile struct {
-	Key          string            `json:"key"`
-	Size         int64             `json:"size"`
-	ETag         string            `json:"etag"`
-	ContentType  string            `json:"content_type"`
-	LastModified time.Time         `json:"last_modified"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
-	DataMtime    time.Time         `json:"data_mtime,omitempty"`
-	DataSize     int64             `json:"data_size,omitempty"`
+	Key          string            `json:"key"`                     // 对象 key
+	Size         int64             `json:"size"`                    // 对象字节数
+	ETag         string            `json:"etag"`                    // 对象 ETag 值
+	ContentType  string            `json:"content_type"`            // 对象 Content-Type
+	LastModified time.Time         `json:"last_modified"`           // 对象最后修改时间
+	Metadata     map[string]string `json:"metadata,omitempty"`      // 对象自定义元数据
+	DataMtime    time.Time         `json:"data_mtime,omitempty"`    // 数据文件修改时间，用于判断缓存是否过期
+	DataSize     int64             `json:"data_size,omitempty"`     // 上次计算 ETag 时的数据文件大小
 }
 
 func metaPath(baseDir, bucket, key string) string {

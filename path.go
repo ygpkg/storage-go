@@ -22,8 +22,11 @@ const (
 	SchemeFile = "file"
 )
 
+// s3Path S3 兼容后端的 StoragePath 实现。
 type s3Path struct {
-	bucket, key, endpoint string
+	bucket   string // 存储桶名称
+	key      string // 对象 key
+	endpoint string // S3 服务端点，为空时 PublicURL() 返回空字符串
 }
 
 func (p *s3Path) URI() string {
@@ -52,8 +55,12 @@ func NewS3Path(bucket, key, endpoint string) StoragePath {
 	return &s3Path{bucket: bucket, key: key, endpoint: endpoint}
 }
 
+// filePath 本地文件后端的 StoragePath 实现。
 type filePath struct {
-	absDir, bucket, key, httpBase string
+	absDir   string // 本地数据文件根目录
+	bucket   string // bucket 名称，用于拼接 URL
+	key      string // 对象 key，用于拼接 URL
+	httpBase string // 对外 HTTP 基础 URL，为空时 PublicURL() 返回 file:// 形式的绝对路径
 }
 
 func (p *filePath) URI() string {

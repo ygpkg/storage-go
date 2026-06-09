@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/insmtx/storage-go"
+	"github.com/ygpkg/storage-go"
 )
 
 // NewMock 返回内存 mock Storage 实现，无外部依赖。
@@ -19,9 +19,10 @@ func NewMock() storage.Storage {
 	}
 }
 
+// mockStorage 内存 mock 存储实现。
 type mockStorage struct {
-	mu   sync.RWMutex
-	data map[string][]byte // key = "bucket/key"
+	mu   sync.RWMutex       // 保护 data 的读写锁
+	data map[string][]byte // key = "bucket/key"，value = 对象内容
 }
 
 func mockKey(bucket, key string) string { return bucket + "/" + key }
@@ -91,6 +92,7 @@ func (m *mockStorage) getObject(ctx context.Context, bucket, key string) (*stora
 		ContentType:   "application/octet-stream",
 		ContentLength: int64(len(data)),
 		ETag:          fmt.Sprintf("%x", md5.Sum(data)),
+		LastModified:  time.Now(),
 	}, nil
 }
 

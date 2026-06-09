@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/insmtx/storage-go"
+	"github.com/ygpkg/storage-go"
 )
 
 var bucketRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`)

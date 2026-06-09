@@ -21,53 +21,54 @@ var (
 
 // PutObjectResult 单次上传结果。
 type PutObjectResult struct {
-	Path StoragePath
-	ETag string
+	Path StoragePath // 对象存储路径
+	ETag string      // 对象 ETag 值
 }
 
 // GetObjectResult 下载结果，Body 由调用方负责 Close。
 type GetObjectResult struct {
-	Body          io.ReadCloser
-	Path          StoragePath
-	ContentType   string
-	ContentLength int64
-	ETag          string
+	Body          io.ReadCloser // 对象内容流，调用方负责关闭
+	Path          StoragePath   // 对象存储路径
+	ContentType   string        // 对象 Content-Type
+	ContentLength int64         // 对象字节数
+	ETag          string        // 对象 ETag 值
+	LastModified  time.Time     // 对象最后修改时间
 }
 
 // ObjectInfo 对象元数据。
 type ObjectInfo struct {
-	Path         StoragePath
-	Size         int64
-	ETag         string
-	ContentType  string
-	LastModified time.Time
-	Metadata     map[string]string
+	Path         StoragePath       // 对象存储路径
+	Size         int64             // 对象字节数
+	ETag         string            // 对象 ETag 值
+	ContentType  string            // 对象 Content-Type
+	LastModified time.Time         // 对象最后修改时间
+	Metadata     map[string]string // 对象自定义元数据
 }
 
 // ListObjectsOutput ListObjects 单次调用结果。
 // 分页通过 NextContinuationToken 配合 ListOption 中的 MaxKeys 和 StartAfter 实现。
 type ListObjectsOutput struct {
-	Contents              []ObjectInfo
-	CommonPrefixes        []string
-	IsTruncated           bool
-	NextContinuationToken string
+	Contents              []ObjectInfo // 对象列表
+	CommonPrefixes        []string     // 通用前缀列表（非递归列举时返回）
+	IsTruncated           bool         // 结果是否被截断，true 时可通过 NextContinuationToken 继续列举
+	NextContinuationToken string       // 下一页游标，配合 ListOptions.ContinuationToken 使用
 }
 
 // CompletedPart 分片上传单个分片结果。
 type CompletedPart struct {
-	PartNumber int
-	ETag       string
+	PartNumber int    // 分片编号，从 1 开始
+	ETag       string // 该分片的 ETag 值
 }
 
 // BulkDeleteError DeleteObjects 部分失败时的聚合错误。
 type BulkDeleteError struct {
-	Failures []DeleteFailure
+	Failures []DeleteFailure // 删除失败的 key 列表
 }
 
 // DeleteFailure 单个 key 删除失败详情。
 type DeleteFailure struct {
-	Key string
-	Err error
+	Key string // 删除失败的 key
+	Err error  // 删除失败的错误详情
 }
 
 func (e *BulkDeleteError) Error() string {
