@@ -20,4 +20,4 @@ go.work.sum
 .env.test
 
 # Docs
-docs/superpowers/
+docs/superpowers/**
