@@ -6,9 +6,7 @@ import (
 	"github.com/ygpkg/storage-go/driver/internal/s3driver"
 )
 
-const DriverName = "minio"
-
-func init() { storage.Register(DriverName, New) }
+func init() { storage.Register(string(storage.DriverMinio), New) }
 
 var _ storage.Storage = (*s3driver.Driver)(nil)
 

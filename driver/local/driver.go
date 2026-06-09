@@ -18,9 +18,7 @@ import (
 	"github.com/ygpkg/storage-go/driver/internal/pathcheck"
 )
 
-const DriverName = "local"
-
-func init() { storage.Register(DriverName, New) }
+func init() { storage.Register(string(storage.DriverLocal), New) }
 
 // Config Local driver 独立配置。
 type Config struct {
