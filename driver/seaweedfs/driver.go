@@ -17,8 +17,8 @@ type driver struct {
 	*s3driver.Driver
 }
 
-func New(cfg storage.Config) (storage.Storage, error) {
-	sd, err := s3driver.New(cfg, storage.URLFormatS3)
+func New(cfg storage.Config, pb storage.PathBuilder) (storage.Storage, error) {
+	sd, err := s3driver.New(cfg, pb)
 	if err != nil {
 		return nil, err
 	}

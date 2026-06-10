@@ -34,8 +34,8 @@ type Driver struct {
 
 var _ storage.Storage = (*Driver)(nil)
 
-func New(cfg storage.Config) (storage.Storage, error) {
-	inner, err := s3driver.New(cfg, storage.URLFormatCOS)
+func New(cfg storage.Config, pb storage.PathBuilder) (storage.Storage, error) {
+	inner, err := s3driver.New(cfg, pb)
 	if err != nil {
 		return nil, err
 	}
