@@ -19,7 +19,7 @@ storage-go 是一个统一的对象存储抽象库，对外暴露一套与 S3 �
 | S3 语义对齐 | 接口方法名与语义对标 S3 API，入参以 bucket、key 分开传递 |
 | 按需引入 | 调用方通过 blank import 引入所需 driver，未使用的后端不会被编译进二进制 |
 | 返回值携带路径语义 | 返回值中的 StoragePath interface 提供多种路径视图，便于序列化与跨服务传递 |
-| 统一入口 | New(name, Config) 构建 Storage，driver 通过 init() 自动注册 |
+| 统一入口 | New(name, Config, PathBuilder) 构建 Storage，driver 通过 init() 自动注册 |
 | 无循环依赖 | 类型定义与注册机制均在根包，依赖图为单向 DAG |
 | 错误统一 | sentinel error + errors.Is 屏蔽底层错误码差异 |
 
@@ -32,7 +32,7 @@ storage-go 是一个统一的对象存储抽象库，对外暴露一套与 S3 �
 ```
 storage-go/
 ├── storage.go          # 接口定义：Base / Multipart / Ext，由三者组合成 Storage
-├── path.go             # StoragePath interface 及 s3Path / filePath 实现 + NewS3Path / NewLocalPath 工厂
+├── path.go             # 提供 StoragePath interface + s3Path / filePath 实现 + NewS3Path / NewLocalPath 工厂 + PathBuilder interface + S3PathBuilder / LocalPathBuilder 默认实现
 ├── types.go            # sentinel error + ObjectInfo / PutObjectResult / GetObjectResult / ListObjectsOutput 等公共类型
 ├── options.go          # PutOption / GetOption / ListOption
 ├── registry.go         # driver 注册表，Register() / LookupDriver() / Drivers()
@@ -71,18 +71,19 @@ storage-go/
 func Register(name string, factory DriverFactory) { ... }
 
 // driver/minio/driver.go
-func init() { storage.Register("minio", func(cfg storage.Config) (storage.Storage, error) { ... }) }
+func init() { storage.Register("minio", func(cfg storage.Config, pb storage.PathBuilder) (storage.Storage, error) { ... }) }
 
 // 调用方
 import storage "github.com/ygpkg/storage-go"
 import _ "github.com/ygpkg/storage-go/driver/minio"
 
-client, err := storage.New("minio", storage.Config{...})
+pb := &storage.S3PathBuilder{Endpoint: "play.min.io", Format: storage.URLFormatS3}
+client, err := storage.New("minio", storage.Config{...}, pb)
 ```
 
 ## 三、StoragePath 设计
 
-StoragePath 是一个 interface，仅出现在返回值中，不作为接口入参。由 driver 内部从 bucket、key 组装后返回，目前有 s3Path 和 localPath 两种实现。
+StoragePath 是一个 interface，仅出现在返回值中，不作为接口入参。由调用方注入的 PathBuilder 从 bucket、key 组装后返回，目前有 s3Path 和 localPath 两种实现。
 
 ### 3.1 interface 定义
 
@@ -98,7 +99,7 @@ type StoragePath interface {
 }
 ```
 
-`NewS3Path(bucket, key, endpoint string) StoragePath` 和 `NewLocalPath(absDir, bucket, key, httpBase string) StoragePath` 是两个工厂函数，由根包统一导出，各 driver 直接调用，无需各自定义 path 类型。
+`NewS3Path(bucket, key, baseURL, endpoint string, format URLFormat) StoragePath` 和 `NewLocalPath(absDir, bucket, key, httpBase string) StoragePath` 是两个工厂函数，由根包统一导出。driver 通过注入的 `PathBuilder.Build(bucket, key)` 间接调用，driver 包不直接依赖 path 构造细节。
 
 ### 3.2 路径视图汇总
 
@@ -303,7 +304,6 @@ type Config struct {
 
     // 本地磁盘后端
     LocalDir string // bucket 映射为 data/ 下的子目录
-    BaseURL  string // 配置后 StoragePath.PublicURL() 返回 HTTP URL；S3 后端为空时回退到 Endpoint
 
     MaxRetries   int           // 默认 3
     Timeout      time.Duration
@@ -311,15 +311,15 @@ type Config struct {
 }
 ```
 
-> 驱动选择通过 `New("driver-name", Config{...})` 的第一个参数 `name` 传入，`Config` 结构体不包含 `Driver` 字段。常量 `DriverMinio`/`DriverCOS`/`DriverSeaweedFS`/`DriverLocal` 的类型为 `DriverType`（`string` 的命名类型），可显式用 `string(...)` 转换后传入。
+> 驱动选择通过 `New("driver-name", Config{...}, PathBuilder)` 的第一个参数 `name` 传入，`Config` 结构体不包含 `Driver` 字段。常量 `DriverMinio`/`DriverCOS`/`DriverSeaweedFS`/`DriverLocal` 的类型为 `DriverType`（`string` 的命名类型），可显式用 `string(...)` 转换后传入。
 
-> New 的签名为 `New(name string, cfg Config) (Storage, error)`。name 为空时返回 `ErrInvalidConfig`。
+> New 的签名为 `New(name DriverType, cfg Config, pb PathBuilder) (Storage, error)`。name 为空或 pb 为 nil 时返回 `ErrInvalidConfig`。`Config.BaseURL` 已迁出，URL 拼接相关配置由 `PathBuilder` 承载（S3 后端用 `S3PathBuilder.BaseURL` / `S3PathBuilder.Endpoint`，Local 后端用 `LocalPathBuilder.BaseURL`）。
 
 ## 九、driver 实现规范
 
-- 每个 driver 包对外只暴露内部的 `New(storage.Config)` 函数，并在 `init()` 中向主包注册
+- 每个 driver 包对外只暴露内部的 `New(storage.Config, storage.PathBuilder)` 函数，并在 `init()` 中向主包注册
 - 只 import 根包（仅用于调用 Register）和各自的 SDK，以及标准库
-- 返回值中的 StoragePath 由 driver 从入参 bucket、key 直接构造，不经过字符串解析
+- 返回值中的 StoragePath 由调用方注入的 `PathBuilder` 构造，driver 不感知 URL 拼接细节
 - ETag 格式：S3 兼容后端（MinIO/COS/SeaweedFS）通过 aws-sdk-go-v2 返回原始 ETag（通常带双引号如 `"abc123"`）；Local driver 使用 hex 编码的 MD5，不带双引号
 - 错误统一通过 `fmt.Errorf("%w", ErrXxx)` 包装为 sentinel error
 
@@ -327,7 +327,7 @@ type Config struct {
 func (d *driver) PutObject(...) (*storage.PutObjectResult, error) {
     // ...
     return &storage.PutObjectResult{
-        Path: storage.NewS3Path(bucket, key, d.cfg.Endpoint),
+        Path: d.pb.Build(bucket, key),
         ETag: aws.ToString(output.ETag),
     }, nil
 }
@@ -375,7 +375,7 @@ Base / Multipart 子接口保持原子性（每个方法对应一次独立的存
 
 `PresignPutObject` 通过短期 TTL 实现"准一次性 URL"。将 URL 的签名有效期设为 30-60s，业务层确保单次调用即足够。严格的一次性约束须由服务端侧策略（如唯一 key + 上传后 rename）配合。
 
-`PublicURL` 的行为由 `StoragePath` 实现决定：S3 后端优先使用 `base_url`，为空时回退到 `endpoint`，拼接 `{base}/bucket/key`；Local 后端拼接 `BaseURL` 或回退到本地绝对路径。调用方从 `PutObjectResult`、`GetObjectResult` 等结果中的 `.Path.PublicURL()` 获取即可。
+`PublicURL` 的行为由 `StoragePath` 实现决定：S3 后端优先使用 `S3PathBuilder.BaseURL`，为空时回退到 `S3PathBuilder.Endpoint`，拼接 `{base}/bucket/key`；Local 后端使用 `LocalPathBuilder.BaseURL` 或回退到本地绝对路径。调用方从 `PutObjectResult`、`GetObjectResult` 等结果中的 `.Path.PublicURL()` 获取即可。
 
 ## 十二、Local Driver 实现思路
 
