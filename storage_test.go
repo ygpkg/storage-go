@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/ygpkg/storage-go"
 	_ "github.com/ygpkg/storage-go/driver/cos"
@@ -126,6 +128,73 @@ func TestPutGetWithByteRange(t *testing.T) {
 	got, _ := io.ReadAll(obj.Body)
 	if !bytes.Equal(got, []byte("defg")) {
 		t.Errorf("range read = %q, want %q", got, "defg")
+	}
+}
+
+func TestPresignGetObject(t *testing.T) {
+	data := []byte("presign-get-data")
+	_, err := testStorage.PutObject(ctx, bucket, "presign-get.txt", bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	url, err := testStorage.PresignGetObject(ctx, bucket, "presign-get.txt", 60*time.Second)
+	if errors.Is(err, storage.ErrNotSupported) {
+		t.Skip("driver does not support PresignGetObject")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if url == "" {
+		t.Fatal("PresignGetObject returned empty URL")
+	}
+	t.Logf("PresignGetObject URL: %s", url)
+
+	resp, err := httpGet(url)
+	if err != nil {
+		t.Fatalf("GET presigned URL: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200", url, resp.StatusCode)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	if !bytes.Equal(got, data) {
+		t.Fatalf("body = %q, want %q", got, data)
+	}
+}
+
+func TestPresignPutObject(t *testing.T) {
+	newData := []byte("uploaded-via-presign-put")
+	url, err := testStorage.PresignPutObject(ctx, bucket, "presign-put.txt", 60*time.Second)
+	if errors.Is(err, storage.ErrNotSupported) {
+		t.Skip("driver does not support PresignPutObject")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if url == "" {
+		t.Fatal("PresignPutObject returned empty URL")
+	}
+	t.Logf("PresignPutObject URL: %s", url)
+
+	resp, err := httpPut(url, "application/octet-stream", newData)
+	if err != nil {
+		t.Fatalf("PUT presigned URL: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT %s = %d, want 200", url, resp.StatusCode)
+	}
+
+	obj, err := testStorage.GetObject(ctx, bucket, "presign-put.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer obj.Body.Close()
+	got, _ := io.ReadAll(obj.Body)
+	if !bytes.Equal(got, newData) {
+		t.Fatalf("GetObject after presign-put = %q, want %q", got, newData)
 	}
 }
 
@@ -347,4 +416,17 @@ func hasCommonPrefix(prefixes []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func httpGet(url string) (*http.Response, error) {
+	return http.DefaultClient.Get(url)
+}
+
+func httpPut(url, contentType string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	return http.DefaultClient.Do(req)
 }
