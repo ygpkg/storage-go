@@ -112,3 +112,30 @@ func (p *filePath) absPath() string {
 func NewLocalPath(absDir, bucket, key, httpBase string) StoragePath {
 	return &filePath{absDir: absDir, bucket: bucket, key: key, httpBase: httpBase}
 }
+
+// PathBuilder 为 driver 提供构造 StoragePath 的能力。
+// driver 不再直接调 NewS3Path / NewLocalPath，统一通过本接口获取路径实例。
+type PathBuilder interface {
+	Build(bucket, key string) StoragePath
+}
+
+// S3PathBuilder 构造 S3 兼容后端的 StoragePath。
+type S3PathBuilder struct {
+	BaseURL  string    // 对外公共访问基础 URL，优先使用
+	Endpoint string    // S3 服务端点，BaseURL 为空时回退
+	Format   URLFormat // 拼接格式（S3 标准 / COS 虚拟主机式）
+}
+
+func (b *S3PathBuilder) Build(bucket, key string) StoragePath {
+	return NewS3Path(bucket, key, b.BaseURL, b.Endpoint, b.Format)
+}
+
+// LocalPathBuilder 构造本地文件后端的 StoragePath。
+type LocalPathBuilder struct {
+	AbsDir  string // 本地数据文件根目录
+	BaseURL string // 对外 HTTP 基础 URL，为空时 PublicURL() 返回 file:// 形式绝对路径
+}
+
+func (b *LocalPathBuilder) Build(bucket, key string) StoragePath {
+	return NewLocalPath(b.AbsDir, bucket, key, b.BaseURL)
+}

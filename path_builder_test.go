@@ -1,0 +1,66 @@
+package storage
+
+import (
+	"testing"
+)
+
+func TestS3PathBuilder_Build(t *testing.T) {
+	pb := &S3PathBuilder{
+		BaseURL:  "https://cdn.example.com",
+		Endpoint: "https://s3.example.com",
+		Format:   URLFormatS3,
+	}
+	p := pb.Build("avatars", "user/1.png")
+	if p.Bucket() != "avatars" {
+		t.Errorf("Bucket = %q, want avatars", p.Bucket())
+	}
+	if p.Key() != "user/1.png" {
+		t.Errorf("Key = %q, want user/1.png", p.Key())
+	}
+	if got, want := p.URI(), "s3://avatars/user/1.png"; got != want {
+		t.Errorf("URI = %q, want %q", got, want)
+	}
+	if got, want := p.PublicURL(), "https://cdn.example.com/avatars/user/1.png"; got != want {
+		t.Errorf("PublicURL = %q, want %q", got, want)
+	}
+}
+
+func TestS3PathBuilder_BuildCOSFormat(t *testing.T) {
+	pb := &S3PathBuilder{
+		BaseURL:  "https://cdn.example.com",
+		Endpoint: "https://mybucket-1250000000.cos.ap-guangzhou.myqcloud.com",
+		Format:   URLFormatCOS,
+	}
+	p := pb.Build("mybucket-1250000000", "user/1.png")
+	if got, want := p.PublicURL(), "https://cdn.example.com/user/1.png"; got != want {
+		t.Errorf("PublicURL = %q, want %q (COS format should omit bucket)", got, want)
+	}
+}
+
+func TestLocalPathBuilder_Build(t *testing.T) {
+	pb := &LocalPathBuilder{
+		AbsDir:  "/data/storage",
+		BaseURL: "http://localhost:8080",
+	}
+	p := pb.Build("avatars", "user/1.png")
+	if p.IsLocal() != true {
+		t.Error("IsLocal should be true")
+	}
+	if got, want := p.URI(), "file://avatars/user/1.png"; got != want {
+		t.Errorf("URI = %q, want %q", got, want)
+	}
+	if got, want := p.PublicURL(), "http://localhost:8080/avatars/user/1.png"; got != want {
+		t.Errorf("PublicURL = %q, want %q", got, want)
+	}
+}
+
+func TestLocalPathBuilder_BuildNoHTTPBase(t *testing.T) {
+	pb := &LocalPathBuilder{
+		AbsDir:  "/data/storage",
+		BaseURL: "",
+	}
+	p := pb.Build("avatars", "1.png")
+	if got, want := p.PublicURL(), "/data/storage/avatars/1.png"; got != want {
+		t.Errorf("PublicURL = %q, want %q", got, want)
+	}
+}
