@@ -22,12 +22,21 @@ const (
 	SchemeFile = "file"
 )
 
+// URLFormat 表示 PublicURL 的拼接格式。
+type URLFormat int
+
+const (
+	URLFormatS3  URLFormat = iota // {base}/{bucket}/{key}
+	URLFormatCOS                   // {base}/{key}（COS 虚拟主机式）
+)
+
 // s3Path S3 兼容后端的 StoragePath 实现。
 type s3Path struct {
-	bucket   string // 存储桶名称
-	key      string // 对象 key
-	baseURL  string // 对外公共访问基础 URL，优先使用
-	endpoint string // S3 服务端点，baseURL 为空时回退到此
+	bucket    string   // 存储桶名称
+	key       string   // 对象 key
+	baseURL   string   // 对外公共访问基础 URL，优先使用
+	endpoint  string   // S3 服务端点，baseURL 为空时回退到此
+	urlFormat URLFormat // PublicURL 拼接格式
 }
 
 func (p *s3Path) URI() string {
@@ -46,7 +55,11 @@ func (p *s3Path) PublicURL() string {
 	if base == "" {
 		return ""
 	}
-	return strings.TrimRight(base, "/") + "/" + p.bucket + "/" + p.key
+	base = strings.TrimRight(base, "/")
+	if p.urlFormat == URLFormatCOS {
+		return base + "/" + p.key
+	}
+	return base + "/" + p.bucket + "/" + p.key
 }
 
 func (p *s3Path) Scheme() string { return SchemeS3 }
@@ -56,9 +69,10 @@ func (p *s3Path) Key() string    { return p.key }
 
 // NewS3Path 构造 S3 兼容后端的 StoragePath。
 // baseURL 为对外公共访问基础 URL，endpoint 为 S3 服务端点。
+// format 决定 PublicURL 的拼接格式。
 // PublicURL() 优先使用 baseURL，为空时回退到 endpoint。
-func NewS3Path(bucket, key, baseURL, endpoint string) StoragePath {
-	return &s3Path{bucket: bucket, key: key, baseURL: baseURL, endpoint: endpoint}
+func NewS3Path(bucket, key, baseURL, endpoint string, format URLFormat) StoragePath {
+	return &s3Path{bucket: bucket, key: key, baseURL: baseURL, endpoint: endpoint, urlFormat: format}
 }
 
 // filePath 本地文件后端的 StoragePath 实现。
