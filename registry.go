@@ -5,7 +5,8 @@ import (
 	"sync"
 )
 
-type DriverFactory func(Config) (Storage, error)
+// DriverFactory driver 工厂签名，构造时必须显式接收 PathBuilder。
+type DriverFactory func(Config, PathBuilder) (Storage, error)
 
 var (
 	registryMu sync.RWMutex
@@ -55,17 +56,21 @@ func Drivers() []string {
 	return names
 }
 
-// New 根据 name 查注册表并用 cfg 构建 Storage。
+// New 根据 name 查注册表并用 cfg + pb 构建 Storage。
 // name 是注册到注册表的驱动名，使用 DriverMinio/DriverCOS 等常量。
+// pb 为 nil 时直接返回错误，强制调用方显式注入 PathBuilder。
 // 未注册时返回明确错误提示需 blank import 相应 driver 子包。
-func New(name DriverType, cfg Config) (Storage, error) {
+func New(name DriverType, cfg Config, pb PathBuilder) (Storage, error) {
 	if name == "" {
 		return nil, fmt.Errorf("%w: Driver is required", ErrInvalidConfig)
+	}
+	if pb == nil {
+		return nil, fmt.Errorf("%w: PathBuilder is required", ErrInvalidConfig)
 	}
 	f, ok := LookupDriver(name)
 	if !ok {
 		return nil, fmt.Errorf("%w: driver %q not registered; please blank import _ \"github.com/ygpkg/storage-go/driver/"+string(name)+"\"",
 			ErrInvalidConfig, string(name))
 	}
-	return f(cfg)
+	return f(cfg, pb)
 }
