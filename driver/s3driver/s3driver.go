@@ -22,17 +22,15 @@ import (
 
 // Driver 基于 aws-sdk-go-v2/service/s3 的统一 S3 驱动实现。
 type Driver struct {
-	client    *s3.Client         // S3 客户端
-	presign   *s3.PresignClient  // S3 预签名客户端
-	baseURL   string             // 对外公共访问基础 URL，用于构建 PublicURL
-	endpoint  string             // S3 服务端点
-	region    string             // 区域
-	urlFormat storage.URLFormat  // PublicURL 拼接格式
+	client  *s3.Client          // S3 客户端
+	presign *s3.PresignClient   // S3 预签名客户端
+	region  string              // 区域
+	pb      storage.PathBuilder // 路径构造器，driver 不再感知 URL 拼接细节
 }
 
 var _ storage.Storage = (*Driver)(nil)
 
-func New(cfg storage.Config, format storage.URLFormat) (storage.Storage, error) {
+func New(cfg storage.Config, pb storage.PathBuilder) (storage.Storage, error) {
 	if cfg.Endpoint == "" {
 		return nil, fmt.Errorf("%w: Endpoint is required", storage.ErrInvalidConfig)
 	}
@@ -56,18 +54,17 @@ func New(cfg storage.Config, format storage.URLFormat) (storage.Storage, error) 
 		o.UsePathStyle = usePathStyle(cfg.Endpoint)
 	})
 	return &Driver{
-		client:    client,
-		presign:   s3.NewPresignClient(client),
-		baseURL:   cfg.BaseURL,
-		endpoint:  cfg.Endpoint,
-		region:    cfg.Region,
-		urlFormat: format,
+		client:  client,
+		presign: s3.NewPresignClient(client),
+		region:  cfg.Region,
+		pb:      pb,
 	}, nil
 }
 
 // NewPath 构造带有当前 driver 配置的 StoragePath。
+// 实际构造委托给注入的 PathBuilder。
 func (d *Driver) NewPath(bucket, key string) storage.StoragePath {
-	return storage.NewS3Path(bucket, key, d.baseURL, d.endpoint, d.urlFormat)
+	return d.pb.Build(bucket, key)
 }
 
 func usePathStyle(endpoint string) bool {
