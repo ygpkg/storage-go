@@ -384,6 +384,97 @@ func TestErrors(t *testing.T) {
 	}
 }
 
+func TestMultipartUpload_FullFlow(t *testing.T) {
+	partSize := 6 * 1024 * 1024
+	body1 := bytes.Repeat([]byte("a"), partSize)
+	body2 := bytes.Repeat([]byte("b"), partSize)
+	body3 := []byte("tail")
+
+	uploadID, err := testStorage.CreateMultipartUpload(ctx, bucket, "multipart-full.txt", storage.WithContentType("text/plain"))
+	if errors.Is(err, storage.ErrNotSupported) {
+		t.Skip("driver does not support CreateMultipartUpload")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uploadID == "" {
+		t.Fatal("uploadID is empty")
+	}
+
+	p1, err := testStorage.UploadPart(ctx, bucket, "multipart-full.txt", uploadID, 1, bytes.NewReader(body1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p1.PartNumber != 1 {
+		t.Errorf("PartNumber = %d, want 1", p1.PartNumber)
+	}
+	if p1.ETag == "" {
+		t.Error("ETag is empty")
+	}
+
+	p2, err := testStorage.UploadPart(ctx, bucket, "multipart-full.txt", uploadID, 2, bytes.NewReader(body2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p2.PartNumber != 2 {
+		t.Errorf("PartNumber = %d, want 2", p2.PartNumber)
+	}
+
+	p3, err := testStorage.UploadPart(ctx, bucket, "multipart-full.txt", uploadID, 3, bytes.NewReader(body3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p3.PartNumber != 3 {
+		t.Errorf("PartNumber = %d, want 3", p3.PartNumber)
+	}
+
+	err = testStorage.CompleteMultipartUpload(ctx, bucket, "multipart-full.txt", uploadID, []storage.CompletedPart{
+		{PartNumber: p1.PartNumber, ETag: p1.ETag},
+		{PartNumber: p2.PartNumber, ETag: p2.ETag},
+		{PartNumber: p3.PartNumber, ETag: p3.ETag},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	obj, err := testStorage.GetObject(ctx, bucket, "multipart-full.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer obj.Body.Close()
+	got, _ := io.ReadAll(obj.Body)
+	if len(got) == 0 {
+		t.Error("merged body is empty")
+	}
+	if obj.ContentType != "text/plain" {
+		t.Errorf("ContentType = %q, want text/plain", obj.ContentType)
+	}
+}
+
+func TestMultipartUpload_Abort(t *testing.T) {
+	uploadID, err := testStorage.CreateMultipartUpload(ctx, bucket, "multipart-abort.txt")
+	if errors.Is(err, storage.ErrNotSupported) {
+		t.Skip("driver does not support CreateMultipartUpload")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = testStorage.UploadPart(ctx, bucket, "multipart-abort.txt", uploadID, 1, bytes.NewReader([]byte("x")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := testStorage.AbortMultipartUpload(ctx, bucket, "multipart-abort.txt", uploadID); err != nil {
+		t.Fatal(err)
+	}
+
+	err = testStorage.CompleteMultipartUpload(ctx, bucket, "multipart-abort.txt", uploadID, nil)
+	if err == nil {
+		t.Error("CompleteMultipartUpload after Abort should fail")
+	}
+}
+
 func logStoragePath(t *testing.T, label string, p storage.StoragePath) {
 	t.Helper()
 	if p == nil {
