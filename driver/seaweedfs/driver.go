@@ -18,7 +18,7 @@ type driver struct {
 }
 
 func New(cfg storage.Config) (storage.Storage, error) {
-	sd, err := s3driver.New(cfg)
+	sd, err := s3driver.New(cfg, storage.URLFormatS3)
 	if err != nil {
 		return nil, err
 	}

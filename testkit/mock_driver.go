@@ -28,7 +28,7 @@ type mockStorage struct {
 func mockKey(bucket, key string) string { return bucket + "/" + key }
 
 func (m *mockStorage) newPath(bucket, key string) storage.StoragePath {
-	return storage.NewS3Path(bucket, key, "", "")
+	return storage.NewS3Path(bucket, key, "", "", storage.URLFormatS3)
 }
 
 // ---------- Base ----------

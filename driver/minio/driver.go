@@ -11,5 +11,5 @@ func init() { storage.Register(string(storage.DriverMinio), New) }
 var _ storage.Storage = (*s3driver.Driver)(nil)
 
 func New(cfg storage.Config) (storage.Storage, error) {
-	return s3driver.New(cfg)
+	return s3driver.New(cfg, storage.URLFormatS3)
 }
