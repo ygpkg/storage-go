@@ -22,22 +22,22 @@ const (
 	SchemeFile = "file"
 )
 
-// URLFormat 表示 PublicURL 的拼接格式。
-type URLFormat int
+// URLStyle 表示 PublicURL 的拼接风格。
+type URLStyle string
 
 const (
-	URLFormatS3  URLFormat = iota // {base}/{bucket}/{key}
-	URLFormatCOS                   // {base}/{key}（COS 虚拟主机式）
+	URLStylePath          URLStyle = "path"           // {base}/{bucket}/{key}
+	URLStyleVirtualHosted URLStyle = "virtual-hosted" // {base}/{key}（虚拟托管式）
 )
 
 // s3Path S3 兼容后端的 StoragePath 实现。
 type s3Path struct {
-	bucket    string   // 存储桶名称
-	key       string   // 对象 key
-	baseURL   string   // 对外公共访问基础 URL，优先使用
-	endpoint  string   // S3 服务端点，仅用于 URLFormatS3 时的 fallback
-	region    string   // 区域，用于 URLFormatCOS 时推导虚拟托管式域名
-	urlFormat URLFormat // PublicURL 拼接格式
+	bucket   string   // 存储桶名称
+	key      string   // 对象 key
+	baseURL  string   // 对外公共访问基础 URL，优先使用
+	endpoint string   // S3 服务端点，仅用于 URLStylePath 时的 fallback
+	region   string   // 区域，用于 URLStyleVirtualHosted 时推导虚拟托管式域名
+	urlStyle URLStyle // PublicURL 拼接风格
 }
 
 func (p *s3Path) URI() string {
@@ -51,7 +51,7 @@ func (p *s3Path) Path() string {
 func (p *s3Path) PublicURL() string {
 	base := p.baseURL
 	if base == "" {
-		if p.urlFormat == URLFormatCOS {
+		if p.urlStyle == URLStyleVirtualHosted {
 			if p.region != "" && p.bucket != "" {
 				base = fmt.Sprintf("https://%s.cos.%s.myqcloud.com", p.bucket, p.region)
 			}
@@ -63,7 +63,7 @@ func (p *s3Path) PublicURL() string {
 		return ""
 	}
 	base = strings.TrimRight(base, "/")
-	if p.urlFormat == URLFormatCOS {
+	if p.urlStyle == URLStyleVirtualHosted {
 		return base + "/" + p.key
 	}
 	return base + "/" + p.bucket + "/" + p.key
@@ -115,20 +115,20 @@ type PathBuilder interface {
 
 // S3PathBuilder 构造 S3 兼容后端的 StoragePath。
 type S3PathBuilder struct {
-	BaseURL  string    // 对外公共访问基础 URL，优先使用
-	Endpoint string    // S3 服务端点，URLFormatS3 时 BaseURL 为空则回退到此
-	Region   string    // 区域，URLFormatCOS 时 BaseURL 为空则推导虚拟托管式域名: https://<bucket>.cos.<region>.myqcloud.com
-	Format   URLFormat // 拼接格式（S3 标准 / COS 虚拟主机式）
+	BaseURL  string   // 对外公共访问基础 URL，优先使用
+	Endpoint string   // S3 服务端点，URLStylePath 时 BaseURL 为空则回退到此
+	Region   string   // 区域，URLStyleVirtualHosted 时 BaseURL 为空则推导虚拟托管式域名: https://<bucket>.cos.<region>.myqcloud.com
+	URLStyle URLStyle // 拼接风格（path / virtual-hosted）
 }
 
 func (b *S3PathBuilder) Build(bucket, key string) StoragePath {
 	return &s3Path{
-		bucket:    bucket,
-		key:       key,
-		baseURL:   b.BaseURL,
-		endpoint:  b.Endpoint,
-		region:    b.Region,
-		urlFormat: b.Format,
+		bucket:   bucket,
+		key:      key,
+		baseURL:  b.BaseURL,
+		endpoint: b.Endpoint,
+		region:   b.Region,
+		urlStyle: b.URLStyle,
 	}
 }
 

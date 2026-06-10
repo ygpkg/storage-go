@@ -52,15 +52,15 @@ func loadConfig() (storage.DriverType, storage.Config, storage.PathBuilder, stri
 		}
 	} else {
 		baseURL := os.Getenv("STORAGE_BASE_URL")
-		format := storage.URLFormatS3
+		urlStyle := storage.URLStylePath
 		if driverName == "cos" {
-			format = storage.URLFormatCOS
+			urlStyle = storage.URLStyleVirtualHosted
 		}
 		pb = &storage.S3PathBuilder{
 			BaseURL:  baseURL,
 			Endpoint: cfg.Endpoint,
 			Region:   cfg.Region,
-			Format:   format,
+			URLStyle: urlStyle,
 		}
 	}
 

@@ -8,7 +8,7 @@ func TestS3PathBuilder_Build(t *testing.T) {
 	pb := &S3PathBuilder{
 		BaseURL:  "https://cdn.example.com",
 		Endpoint: "https://s3.example.com",
-		Format:   URLFormatS3,
+		URLStyle: URLStylePath,
 	}
 	p := pb.Build("avatars", "user/1.png")
 	if p.Bucket() != "avatars" {
@@ -29,7 +29,7 @@ func TestS3PathBuilder_PublicURLFallback(t *testing.T) {
 	pb := &S3PathBuilder{
 		BaseURL:  "",
 		Endpoint: "https://s3.example.com",
-		Format:   URLFormatS3,
+		URLStyle: URLStylePath,
 	}
 	p := pb.Build("b", "k")
 	if got, want := p.PublicURL(), "https://s3.example.com/b/k"; got != want {
@@ -41,7 +41,7 @@ func TestS3PathBuilder_PublicURLBothEmpty(t *testing.T) {
 	pb := &S3PathBuilder{
 		BaseURL:  "",
 		Endpoint: "",
-		Format:   URLFormatS3,
+		URLStyle: URLStylePath,
 	}
 	p := pb.Build("b", "k")
 	if p.PublicURL() != "" {
@@ -54,7 +54,7 @@ func TestS3PathBuilder_BuildCOSFormat(t *testing.T) {
 		BaseURL:  "https://cdn.example.com",
 		Endpoint: "https://cos.ap-guangzhou.myqcloud.com",
 		Region:   "ap-guangzhou",
-		Format:   URLFormatCOS,
+		URLStyle: URLStyleVirtualHosted,
 	}
 	p := pb.Build("mybucket-1250000000", "user/1.png")
 	if got, want := p.PublicURL(), "https://cdn.example.com/user/1.png"; got != want {
@@ -67,7 +67,7 @@ func TestS3PathBuilder_COSFormatFallbackWithRegion(t *testing.T) {
 		BaseURL:  "",
 		Endpoint: "https://cos.ap-guangzhou.myqcloud.com",
 		Region:   "ap-guangzhou",
-		Format:   URLFormatCOS,
+		URLStyle: URLStyleVirtualHosted,
 	}
 	p := pb.Build("mybucket-1250000000", "user/1.png")
 	if got, want := p.PublicURL(), "https://mybucket-1250000000.cos.ap-guangzhou.myqcloud.com/user/1.png"; got != want {
@@ -80,7 +80,7 @@ func TestS3PathBuilder_COSFormatFallbackNoRegion(t *testing.T) {
 		BaseURL:  "",
 		Endpoint: "https://cos.ap-guangzhou.myqcloud.com",
 		Region:   "",
-		Format:   URLFormatCOS,
+		URLStyle: URLStyleVirtualHosted,
 	}
 	p := pb.Build("mybucket-1250000000", "user/1.png")
 	if p.PublicURL() != "" {
@@ -92,7 +92,7 @@ func TestS3PathBuilder_COSFormatBaseURLHasBucket(t *testing.T) {
 	pb := &S3PathBuilder{
 		BaseURL:  "https://mybucket-1250000000.cos.ap-guangzhou.myqcloud.com",
 		Endpoint: "https://cos.ap-guangzhou.myqcloud.com",
-		Format:   URLFormatCOS,
+		URLStyle: URLStyleVirtualHosted,
 	}
 	p := pb.Build("mybucket-1250000000", "user/1.png")
 	if got, want := p.PublicURL(), "https://mybucket-1250000000.cos.ap-guangzhou.myqcloud.com/user/1.png"; got != want {
