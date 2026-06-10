@@ -10,6 +10,6 @@ func init() { storage.Register(string(storage.DriverMinio), New) }
 
 var _ storage.Storage = (*s3driver.Driver)(nil)
 
-func New(cfg storage.Config) (storage.Storage, error) {
-	return s3driver.New(cfg)
+func New(cfg storage.Config, pb storage.PathBuilder) (storage.Storage, error) {
+	return s3driver.New(cfg, pb)
 }

@@ -14,6 +14,7 @@ const (
 
 // Config 通用配置，由 driver 工厂消费。
 // 驱动选择通过 New() 的第一个参数传入，不放在 Config 里。
+// BaseURL 已迁到 LocalPathBuilder.BaseURL（S3 后端的 URL 渲染由 PathBuilder 负责）。
 type Config struct {
 	// S3 兼容后端通用字段
 	Endpoint  string `yaml:"endpoint"`   // S3 服务端点地址
@@ -24,8 +25,7 @@ type Config struct {
 	UseSSL    bool   `yaml:"use_ssl"`    // 是否使用 SSL 连接
 
 	// 本地磁盘后端
-	BaseDir string `yaml:"base_dir"`  // 本地存储根目录
-	BaseURL  string `yaml:"base_url"`  // 对外公共访问基础 URL，为空时 S3 后端回退到 Endpoint
+	BaseDir string `yaml:"base_dir"` // 本地存储根目录
 
 	// 通用
 	MaxRetries   int               `yaml:"max_retries"`   // 最大重试次数

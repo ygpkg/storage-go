@@ -22,12 +22,22 @@ const (
 	SchemeFile = "file"
 )
 
+// URLStyle 表示 PublicURL 的拼接风格。
+type URLStyle string
+
+const (
+	URLStylePath          URLStyle = "path"           // {base}/{bucket}/{key}
+	URLStyleVirtualHosted URLStyle = "virtual-hosted" // {base}/{key}（虚拟托管式）
+)
+
 // s3Path S3 兼容后端的 StoragePath 实现。
 type s3Path struct {
-	bucket   string // 存储桶名称
-	key      string // 对象 key
-	baseURL  string // 对外公共访问基础 URL，优先使用
-	endpoint string // S3 服务端点，baseURL 为空时回退到此
+	bucket   string   // 存储桶名称
+	key      string   // 对象 key
+	baseURL  string   // 对外公共访问基础 URL，优先使用
+	endpoint string   // S3 服务端点，仅用于 URLStylePath 时的 fallback
+	region   string   // 区域，用于 URLStyleVirtualHosted 时推导虚拟托管式域名
+	urlStyle URLStyle // PublicURL 拼接风格
 }
 
 func (p *s3Path) URI() string {
@@ -41,25 +51,28 @@ func (p *s3Path) Path() string {
 func (p *s3Path) PublicURL() string {
 	base := p.baseURL
 	if base == "" {
-		base = p.endpoint
+		if p.urlStyle == URLStyleVirtualHosted {
+			if p.region != "" && p.bucket != "" {
+				base = fmt.Sprintf("https://%s.cos.%s.myqcloud.com", p.bucket, p.region)
+			}
+		} else {
+			base = p.endpoint
+		}
 	}
 	if base == "" {
 		return ""
 	}
-	return strings.TrimRight(base, "/") + "/" + p.bucket + "/" + p.key
+	base = strings.TrimRight(base, "/")
+	if p.urlStyle == URLStyleVirtualHosted {
+		return base + "/" + p.key
+	}
+	return base + "/" + p.bucket + "/" + p.key
 }
 
 func (p *s3Path) Scheme() string { return SchemeS3 }
 func (p *s3Path) IsLocal() bool  { return false }
 func (p *s3Path) Bucket() string { return p.bucket }
 func (p *s3Path) Key() string    { return p.key }
-
-// NewS3Path 构造 S3 兼容后端的 StoragePath。
-// baseURL 为对外公共访问基础 URL，endpoint 为 S3 服务端点。
-// PublicURL() 优先使用 baseURL，为空时回退到 endpoint。
-func NewS3Path(bucket, key, baseURL, endpoint string) StoragePath {
-	return &s3Path{bucket: bucket, key: key, baseURL: baseURL, endpoint: endpoint}
-}
 
 // filePath 本地文件后端的 StoragePath 实现。
 type filePath struct {
@@ -93,8 +106,43 @@ func (p *filePath) absPath() string {
 	return fmt.Sprintf("%s/%s/%s", strings.TrimRight(p.absDir, "/"), p.bucket, p.key)
 }
 
-// NewLocalPath 构造 Local driver 的 StoragePath。
-// httpBase 为空时 PublicURL() 返回 file:// 形式的绝对路径。
-func NewLocalPath(absDir, bucket, key, httpBase string) StoragePath {
-	return &filePath{absDir: absDir, bucket: bucket, key: key, httpBase: httpBase}
+// PathBuilder 为 driver 提供构造 StoragePath 的能力。
+// driver 通过注入的 PathBuilder.Build(bucket, key) 获取路径实例，
+// 不直接构造 s3Path / filePath。
+type PathBuilder interface {
+	Build(bucket, key string) StoragePath
+}
+
+// S3PathBuilder 构造 S3 兼容后端的 StoragePath。
+type S3PathBuilder struct {
+	BaseURL  string   // 对外公共访问基础 URL，优先使用
+	Endpoint string   // S3 服务端点，URLStylePath 时 BaseURL 为空则回退到此
+	Region   string   // 区域，URLStyleVirtualHosted 时 BaseURL 为空则推导虚拟托管式域名: https://<bucket>.cos.<region>.myqcloud.com
+	URLStyle URLStyle // 拼接风格（path / virtual-hosted）
+}
+
+func (b *S3PathBuilder) Build(bucket, key string) StoragePath {
+	return &s3Path{
+		bucket:   bucket,
+		key:      key,
+		baseURL:  b.BaseURL,
+		endpoint: b.Endpoint,
+		region:   b.Region,
+		urlStyle: b.URLStyle,
+	}
+}
+
+// LocalPathBuilder 构造本地文件后端的 StoragePath。
+type LocalPathBuilder struct {
+	AbsDir  string // 本地数据文件根目录
+	BaseURL string // 对外 HTTP 基础 URL，为空时 PublicURL() 返回 file:// 形式绝对路径
+}
+
+func (b *LocalPathBuilder) Build(bucket, key string) StoragePath {
+	return &filePath{
+		absDir:   b.AbsDir,
+		bucket:   bucket,
+		key:      key,
+		httpBase: b.BaseURL,
+	}
 }

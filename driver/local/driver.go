@@ -3,8 +3,8 @@ package local
 import (
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"crypto/md5"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -31,30 +31,26 @@ type Config struct {
 
 // Driver 本地磁盘存储驱动。
 type Driver struct {
-	baseDir  string          // 本地根目录
-	baseURL  string          // 对外公共访问基础 URL，用于构建 PublicURL
-	keys     *keyLocks       // key 级别读写锁
-	mp       *multipartStore // 分片上传状态存储
+	baseDir string              // 本地根目录
+	keys    *keyLocks           // key 级别读写锁
+	mp      *multipartStore     // 分片上传状态存储
+	pb      storage.PathBuilder // 路径构造器
 }
 
 var _ storage.Storage = (*Driver)(nil)
 
-func New(cfg storage.Config) (storage.Storage, error) {
-	dCfg := Config{
-		BaseDir: cfg.BaseDir,
-		BaseURL: cfg.BaseURL,
-	}
-	if dCfg.BaseDir == "" {
+func New(cfg storage.Config, pb storage.PathBuilder) (storage.Storage, error) {
+	if cfg.BaseDir == "" {
 		return nil, fmt.Errorf("%w: BaseDir is required for local driver", storage.ErrInvalidConfig)
 	}
-	if err := os.MkdirAll(dCfg.BaseDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.BaseDir, 0o755); err != nil {
 		return nil, err
 	}
 	return &Driver{
-		baseDir: dCfg.BaseDir,
-		baseURL: dCfg.BaseURL,
+		baseDir: cfg.BaseDir,
 		keys:    newKeyLocks(),
-		mp:      newMultipartStore(dCfg.BaseDir),
+		mp:      newMultipartStore(cfg.BaseDir),
+		pb:      pb,
 	}, nil
 }
 
@@ -63,7 +59,7 @@ func (d *Driver) dataPath(bucket, key string) string {
 }
 
 func (d *Driver) newPath(bucket, key string) storage.StoragePath {
-	return storage.NewLocalPath(filepath.Join(d.baseDir, "data"), bucket, key, d.baseURL)
+	return d.pb.Build(bucket, key)
 }
 
 func sortLocks(a, b string) (first, second string) {
@@ -628,7 +624,7 @@ func (d *Driver) PresignPutObject(ctx context.Context, bucket, key string, ttl t
 
 // keyLocks 按 key 粒度的读写锁映射表。
 type keyLocks struct {
-	mu sync.Mutex            // 保护 m 的互斥锁
+	mu sync.Mutex               // 保护 m 的互斥锁
 	m  map[string]*sync.RWMutex // key -> 读写锁映射
 }
 

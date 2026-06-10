@@ -29,14 +29,13 @@ func init() { storage.Register(string(storage.DriverCOS), New) }
 
 type Driver struct {
 	*s3driver.Driver
-	client  *s3.Client
-	baseURL string
+	client *s3.Client
 }
 
 var _ storage.Storage = (*Driver)(nil)
 
-func New(cfg storage.Config) (storage.Storage, error) {
-	inner, err := s3driver.New(cfg)
+func New(cfg storage.Config, pb storage.PathBuilder) (storage.Storage, error) {
+	inner, err := s3driver.New(cfg, pb)
 	if err != nil {
 		return nil, err
 	}
@@ -57,9 +56,8 @@ func New(cfg storage.Config) (storage.Storage, error) {
 		})
 	})
 	return &Driver{
-		Driver:  inner.(*s3driver.Driver),
-		client:  client,
-		baseURL: cfg.BaseURL,
+		Driver: inner.(*s3driver.Driver),
+		client: client,
 	}, nil
 }
 
@@ -106,7 +104,7 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, body io.Read
 	etag := trimETag(aws.ToString(output.ETag))
 	return &storage.PutObjectResult{
 		ObjectInfo: storage.ObjectInfo{
-			Path:         storage.NewS3Path(bucket, key, d.baseURL, ""),
+			Path:         d.Driver.NewPath(bucket, key),
 			Size:         aws.ToInt64(output.Size),
 			ETag:         etag,
 			ContentType:  o.ContentType,

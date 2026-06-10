@@ -22,16 +22,15 @@ import (
 
 // Driver 基于 aws-sdk-go-v2/service/s3 的统一 S3 驱动实现。
 type Driver struct {
-	client  *s3.Client        // S3 客户端
-	presign *s3.PresignClient // S3 预签名客户端
-	baseURL string            // 对外公共访问基础 URL，用于构建 PublicURL
-	endpoint string            // S3 服务端点
-	region  string            // 区域
+	client  *s3.Client          // S3 客户端
+	presign *s3.PresignClient   // S3 预签名客户端
+	region  string              // 区域
+	pb      storage.PathBuilder // 路径构造器，driver 不再感知 URL 拼接细节
 }
 
 var _ storage.Storage = (*Driver)(nil)
 
-func New(cfg storage.Config) (storage.Storage, error) {
+func New(cfg storage.Config, pb storage.PathBuilder) (storage.Storage, error) {
 	if cfg.Endpoint == "" {
 		return nil, fmt.Errorf("%w: Endpoint is required", storage.ErrInvalidConfig)
 	}
@@ -57,14 +56,15 @@ func New(cfg storage.Config) (storage.Storage, error) {
 	return &Driver{
 		client:  client,
 		presign: s3.NewPresignClient(client),
-		baseURL: cfg.BaseURL,
-		endpoint: cfg.Endpoint,
 		region:  cfg.Region,
+		pb:      pb,
 	}, nil
 }
 
-func (d *Driver) newPath(bucket, key string) storage.StoragePath {
-	return storage.NewS3Path(bucket, key, d.baseURL, d.endpoint)
+// NewPath 构造带有当前 driver 配置的 StoragePath。
+// 实际构造委托给注入的 PathBuilder。
+func (d *Driver) NewPath(bucket, key string) storage.StoragePath {
+	return d.pb.Build(bucket, key)
 }
 
 func usePathStyle(endpoint string) bool {
@@ -114,7 +114,7 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, body io.Read
 	etag := trimETag(aws.ToString(output.ETag))
 	return &storage.PutObjectResult{
 		ObjectInfo: storage.ObjectInfo{
-			Path:         d.newPath(bucket, key),
+			Path:         d.NewPath(bucket, key),
 			Size:         aws.ToInt64(output.Size),
 			ETag:         etag,
 			ContentType:  o.ContentType,
@@ -150,7 +150,7 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...stor
 	return &storage.GetObjectResult{
 		Body: output.Body,
 		ObjectInfo: storage.ObjectInfo{
-			Path:         d.newPath(bucket, key),
+			Path:         d.NewPath(bucket, key),
 			Size:         aws.ToInt64(output.ContentLength),
 			ETag:         trimETag(aws.ToString(output.ETag)),
 			ContentType:  aws.ToString(output.ContentType),
@@ -239,7 +239,7 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 			continue
 		}
 		contents = append(contents, storage.ObjectInfo{
-			Path:         d.newPath(bucket, aws.ToString(obj.Key)),
+			Path:         d.NewPath(bucket, aws.ToString(obj.Key)),
 			Size:         aws.ToInt64(obj.Size),
 			ETag:         aws.ToString(obj.ETag),
 			LastModified: aws.ToTime(obj.LastModified),
@@ -364,7 +364,7 @@ func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*storage.O
 		return nil, wrapS3Err(err)
 	}
 	info := &storage.ObjectInfo{
-		Path:         d.newPath(bucket, key),
+		Path:         d.NewPath(bucket, key),
 		Size:         aws.ToInt64(output.ContentLength),
 		ETag:         trimETag(aws.ToString(output.ETag)),
 		ContentType:  aws.ToString(output.ContentType),
