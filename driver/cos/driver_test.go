@@ -17,6 +17,9 @@ func TestCosIntegration(t *testing.T) {
 		Endpoint:  endpoint,
 		AccessKey: os.Getenv("TEST_COS_ACCESS_KEY"),
 		SecretKey: os.Getenv("TEST_COS_SECRET_KEY"),
+	}, &storage.S3PathBuilder{
+		Endpoint: endpoint,
+		Format:   storage.URLFormatCOS,
 	})
 	if err != nil {
 		t.Fatal(err)

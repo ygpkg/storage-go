@@ -18,6 +18,9 @@ func TestSeaweedFSIntegration(t *testing.T) {
 		AccessKey: os.Getenv("TEST_WEEDFS_ACCESS_KEY"),
 		SecretKey: os.Getenv("TEST_WEEDFS_SECRET_KEY"),
 		UseSSL:    false,
+	}, &storage.S3PathBuilder{
+		Endpoint: endpoint,
+		Format:   storage.URLFormatS3,
 	})
 	if err != nil {
 		t.Fatal(err)
