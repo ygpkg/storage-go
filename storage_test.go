@@ -22,7 +22,7 @@ var (
 
 var ctx = context.Background()
 
-func loadConfig() (storage.DriverType, storage.Config, string) {
+func loadConfig() (storage.DriverType, storage.Config, storage.PathBuilder, string) {
 	driverName := os.Getenv("STORAGE_DRIVER")
 	if driverName == "" {
 		driverName = "local"
@@ -34,33 +34,45 @@ func loadConfig() (storage.DriverType, storage.Config, string) {
 		AccessKey: os.Getenv("STORAGE_ACCESS_KEY"),
 		SecretKey: os.Getenv("STORAGE_SECRET_KEY"),
 		BaseDir:   os.Getenv("STORAGE_BASE_DIR"),
-		BaseURL:   os.Getenv("STORAGE_BASE_URL"),
 	}
 
 	bucket := os.Getenv("STORAGE_BUCKET")
 
+	var pb storage.PathBuilder
 	if driverName == "local" {
 		if cfg.BaseDir == "" {
 			cfg.BaseDir = os.TempDir()
 		}
-		if cfg.BaseURL == "" {
-			cfg.BaseURL = "http://localhost"
-		}
 		if bucket == "" {
 			bucket = "test-bucket"
 		}
+		pb = &storage.LocalPathBuilder{
+			AbsDir:  cfg.BaseDir + "/data",
+			BaseURL: "http://localhost",
+		}
+	} else {
+		baseURL := os.Getenv("STORAGE_BASE_URL")
+		format := storage.URLFormatS3
+		if driverName == "cos" {
+			format = storage.URLFormatCOS
+		}
+		pb = &storage.S3PathBuilder{
+			BaseURL:  baseURL,
+			Endpoint: cfg.Endpoint,
+			Format:   format,
+		}
 	}
 
-	return storage.DriverType(driverName), cfg, bucket
+	return storage.DriverType(driverName), cfg, pb, bucket
 }
 
 func TestMain(m *testing.M) {
-	driverType, cfg, bucketName := loadConfig()
+	driverType, cfg, pb, bucketName := loadConfig()
 	if bucketName == "" {
 		panic("bucket is required: set STORAGE_BUCKET env or configure .env.test")
 	}
 	bucket = bucketName
-	s, err := storage.New(driverType, cfg)
+	s, err := storage.New(driverType, cfg, pb)
 	if err != nil {
 		panic("storage.New: " + err.Error())
 	}
