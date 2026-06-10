@@ -59,6 +59,7 @@ func loadConfig() (storage.DriverType, storage.Config, storage.PathBuilder, stri
 		pb = &storage.S3PathBuilder{
 			BaseURL:  baseURL,
 			Endpoint: cfg.Endpoint,
+			Region:   cfg.Region,
 			Format:   format,
 		}
 	}

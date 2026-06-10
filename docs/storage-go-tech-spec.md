@@ -32,7 +32,7 @@ storage-go 是一个统一的对象存储抽象库，对外暴露一套与 S3 �
 ```
 storage-go/
 ├── storage.go          # 接口定义：Base / Multipart / Ext，由三者组合成 Storage
-├── path.go             # 提供 StoragePath interface + s3Path / filePath 实现 + NewS3Path / NewLocalPath 工厂 + PathBuilder interface + S3PathBuilder / LocalPathBuilder 默认实现
+├── path.go             # 提供 StoragePath interface + s3Path / filePath 实现 + PathBuilder interface + S3PathBuilder / LocalPathBuilder 默认实现
 ├── types.go            # sentinel error + ObjectInfo / PutObjectResult / GetObjectResult / ListObjectsOutput 等公共类型
 ├── options.go          # PutOption / GetOption / ListOption
 ├── registry.go         # driver 注册表，Register() / LookupDriver() / Drivers()
@@ -99,7 +99,7 @@ type StoragePath interface {
 }
 ```
 
-`NewS3Path(bucket, key, baseURL, endpoint string, format URLFormat) StoragePath` 和 `NewLocalPath(absDir, bucket, key, httpBase string) StoragePath` 是两个工厂函数，由根包统一导出。driver 通过注入的 `PathBuilder.Build(bucket, key)` 间接调用，driver 包不直接依赖 path 构造细节。
+`S3PathBuilder` / `LocalPathBuilder` 的 `Build(bucket, key)` 方法负责组装 `StoragePath`，driver 仅依赖注入的 `PathBuilder`，不直接构造 `s3Path` / `filePath`。
 
 ### 3.2 路径视图汇总
 
