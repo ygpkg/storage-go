@@ -13,22 +13,28 @@ import (
 )
 
 // NewMock 返回内存 mock Storage 实现，无外部依赖。
-func NewMock() storage.Storage {
+// pb 用于构造返回的 StoragePath；传 nil 时 panic，要求测试显式注入。
+func NewMock(pb storage.PathBuilder) storage.Storage {
+	if pb == nil {
+		panic("testkit: NewMock requires a non-nil PathBuilder")
+	}
 	return &mockStorage{
+		pb:   pb,
 		data: make(map[string][]byte),
 	}
 }
 
 // mockStorage 内存 mock 存储实现。
 type mockStorage struct {
-	mu   sync.RWMutex       // 保护 data 的读写锁
-	data map[string][]byte // key = "bucket/key"，value = 对象内容
+	mu   sync.RWMutex        // 保护 data 的读写锁
+	pb   storage.PathBuilder // 路径构造器
+	data map[string][]byte   // key = "bucket/key"，value = 对象内容
 }
 
 func mockKey(bucket, key string) string { return bucket + "/" + key }
 
 func (m *mockStorage) newPath(bucket, key string) storage.StoragePath {
-	return storage.NewS3Path(bucket, key, "", "", storage.URLFormatS3)
+	return m.pb.Build(bucket, key)
 }
 
 // ---------- Base ----------
