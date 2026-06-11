@@ -25,7 +25,10 @@ import (
 	"github.com/ygpkg/storage-go/driver/s3driver"
 )
 
-func init() { storage.Register(string(storage.DriverCOS), New) }
+func init() {
+	storage.RegisterStorage(string(storage.DriverCOS), New)
+	storage.RegisterPathBuilder(string(storage.DriverCOS), NewPathBuilder)
+}
 
 type Driver struct {
 	*s3driver.Driver
@@ -34,7 +37,17 @@ type Driver struct {
 
 var _ storage.Storage = (*Driver)(nil)
 
-func New(cfg storage.Config, pb storage.PathBuilder) (storage.Storage, error) {
+func NewPathBuilder(cfg storage.Config) storage.PathBuilder {
+	return &storage.S3PathBuilder{
+		BaseURL:  cfg.BaseURL,
+		Endpoint: cfg.Endpoint,
+		Region:   cfg.Region,
+		URLStyle: storage.URLStyleVirtualHosted,
+	}
+}
+
+func New(cfg storage.Config) (storage.Storage, error) {
+	pb := NewPathBuilder(cfg)
 	inner, err := s3driver.New(cfg, pb)
 	if err != nil {
 		return nil, err

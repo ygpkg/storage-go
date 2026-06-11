@@ -19,7 +19,7 @@ storage-go 是一个统一的对象存储抽象库，对外暴露一套与 S3 �
 | S3 语义对齐 | 接口方法名与语义对标 S3 API，入参以 bucket、key 分开传递 |
 | 按需引入 | 调用方通过 blank import 引入所需 driver，未使用的后端不会被编译进二进制 |
 | 返回值携带路径语义 | 返回值中的 StoragePath interface 提供多种路径视图，便于序列化与跨服务传递 |
-| 统一入口 | New(name, Config, PathBuilder) 构建 Storage，driver 通过 init() 自动注册 |
+| 统一入口 | New(name DriverType, Config) 构建 Storage，driver 通过 init() 自动注册 |
 | 无循环依赖 | 类型定义与注册机制均在根包，依赖图为单向 DAG |
 | 错误统一 | sentinel error + errors.Is 屏蔽底层错误码差异 |
 
@@ -35,11 +35,11 @@ storage-go/
 ├── path.go             # 提供 StoragePath interface + s3Path / filePath 实现 + PathBuilder interface + S3PathBuilder / LocalPathBuilder 默认实现
 ├── types.go            # sentinel error + ObjectInfo / PutObjectResult / GetObjectResult / ListObjectsOutput 等公共类型
 ├── options.go          # PutOption / GetOption / ListOption
-├── registry.go         # driver 注册表，Register() / LookupDriver() / Drivers()
-├── config.go           # Config 定义与 New() 工厂
+├── registry.go         # driver 注册表，RegisterStorage() / RegisterPathBuilder() / Drivers()
+├── config.go           # Config 定义与 DriverType 常量 + New() 工厂
 
 ├── driver/
-│   ├── minio/driver.go  # init() 中调用 storage.Register("minio", ...)
+│   ├── minio/driver.go  # init() 中调用 storage.RegisterStorage("minio", ...) 和 RegisterPathBuilder(...)
 │   ├── cos/driver.go    # COS driver，复用 s3driver 统一逻辑
 │   ├── seaweedfs/driver.go # SeaweedFS driver，通过 s3driver 共享 S3 兼容逻辑
 │   ├── local/driver.go  # sidecar 元数据（BaseDir/data + BaseDir/meta）
@@ -57,33 +57,41 @@ storage-go/
 | 包 | 允许 import | 禁止 import |
 | --- | --- | --- |
 | 根包（storage-go） | 标准库、golang.org/x/sync | driver/*（driver 通过注册机制反向注入） |
-| driver/* | 根包（仅用于调用 Register）、各自 SDK、标准库、s3driver/pathcheck | 其他 driver |
+| driver/* | 根包（仅用于调用 RegisterStorage / RegisterPathBuilder）、各自 SDK、标准库、s3driver/pathcheck | 其他 driver |
 | driver/internal/s3driver | 根包类型、aws-sdk-go-v2、标准库 | driver/*（被 driver 引用，不反向引用） |
 | driver/internal/pathcheck | 根包类型、标准库 | driver/* |
 | testkit | 根包、标准库 | driver/* |
 
 ### 2.3 driver 注册机制
 
-与 database/sql 模式一致：主包维护全局注册表，driver 在 init() 中主动注册，New() 在运行时查表构建 Client。调用方只需 blank import 所需 driver：
+与 database/sql 模式一致：主包维护全局注册表，driver 在 init() 中主动注册 StorageFactory 和 PathBuilderFactory，New() 在运行时查表构建 Client。调用方只需 blank import 所需 driver：
 
 ```go
 // registry.go
-func Register(name string, factory DriverFactory) { ... }
+func RegisterStorage(name string, factory StorageFactory) { ... }
+func RegisterPathBuilder(name string, factory PathBuilderFactory) { ... }
 
 // driver/minio/driver.go
-func init() { storage.Register("minio", func(cfg storage.Config, pb storage.PathBuilder) (storage.Storage, error) { ... }) }
+func init() {
+    storage.RegisterStorage(string(storage.DriverMinio), New)
+    storage.RegisterPathBuilder(string(storage.DriverMinio), NewPathBuilder)
+}
 
 // 调用方
 import storage "github.com/ygpkg/storage-go"
 import _ "github.com/ygpkg/storage-go/driver/minio"
 
-pb := &storage.S3PathBuilder{Endpoint: "play.min.io", Format: storage.URLFormatS3}
-client, err := storage.New("minio", storage.Config{...}, pb)
+client, err := storage.New(storage.DriverMinio, storage.Config{
+    Endpoint: "play.min.io",
+    // ...
+})
 ```
+
+PathBuilder 由各 driver 在工厂内部创建（从 Config 读取相关字段），不再由调用方显式构造。
 
 ## 三、StoragePath 设计
 
-StoragePath 是一个 interface，仅出现在返回值中，不作为接口入参。由调用方注入的 PathBuilder 从 bucket、key 组装后返回，目前有 s3Path 和 localPath 两种实现。
+StoragePath 是一个 interface，仅出现在返回值中，不作为接口入参。由 driver 内部的 PathBuilder 从 bucket、key 组装后返回，目前有 s3Path 和 filePath 两种实现。
 
 ### 3.1 interface 定义
 
@@ -94,24 +102,24 @@ type StoragePath interface {
     PublicURL() string            // https://endpoint/bucket/key | /abs/path
     Scheme() string               // "s3" | "file"
     IsLocal() bool
-    Bucket() string               // local 返回空字符串
-    Key() string                  // 裸 key 或文件绝对路径
+    Bucket() string               // local 返回 bucket 名称
+    Key() string                  // 裸 key
 }
 ```
 
-`S3PathBuilder` / `LocalPathBuilder` 的 `Build(bucket, key)` 方法负责组装 `StoragePath`，driver 仅依赖注入的 `PathBuilder`，不直接构造 `s3Path` / `filePath`。
+`S3PathBuilder` / `LocalPathBuilder` 的 `Build(bucket, key)` 方法负责组装 `StoragePath`，driver 仅通过注入的 `PathBuilder`（由 Driver 工厂从 Config 创建）构造路径。
 
 ### 3.2 路径视图汇总
 
 | 方法 | 返回示例（S3） | 返回示例（Local） | 典型用途 |
 | --- | --- | --- | --- |
-| URI() | `s3://bucket/a.png` | `file:///data/a.png` | 序列化存库、日志、跨服务传递 |
-| Path() | `bucket/a.png` | `/data/a.png` | 传给 SDK 或 os.Open |
-| PublicURL() | `https://endpoint/bucket/a.png` | `/data/a.png` 或 `http://host/...` | 生成对外访问链接 |
+| URI() | `s3://bucket/a.png` | `file://avatars/user/123.png` | 序列化存库、日志、跨服务传递 |
+| Path() | `bucket/a.png` | `avatars/user/123.png` | 传给 SDK 或本地操作 |
+| PublicURL() | `https://endpoint/bucket/a.png` | `http://host/avatars/user/123.png` | 生成对外访问链接 |
 | Scheme() | `"s3"` | `"file"` | switch 分支判断 |
 | IsLocal() | `false` | `true` | 二元判断 |
-| Bucket() | `"bucket"` | `""` | 跨 bucket 操作 |
-| Key() | `"a.png"` | `/data/a.png` | 传给需要裸 key 的 API |
+| Bucket() | `"bucket"` | `"avatars"` | 跨 bucket 操作 |
+| Key() | `"a.png"` | `"user/123.png"` | 传给需要裸 key 的 API |
 
 注意：StoragePath 作为 interface，不可直接用 `==` 比较。需要比较路径时，统一使用 `a.URI() == b.URI()`。
 
@@ -192,16 +200,13 @@ type Storage interface {
 
 ```go
 type PutObjectResult struct {
-    Path StoragePath // 写入后对象的完整路径信息
-    ETag string      // 对象内容唯一标识；S3 后端通常带双引号（如 "abc123"），Local driver 为 hex MD5 不带双引号
+    ObjectInfo
+    VersionID string // S3 版本控制 ID；非版本化场景为空
 }
 
 type GetObjectResult struct {
-    Body          io.ReadCloser // 调用方负责 Close
-    Path          StoragePath
-    ContentType   string
-    ContentLength int64
-    ETag          string
+    Body io.ReadCloser // 调用方负责 Close
+    ObjectInfo
 }
 
 type ObjectInfo struct {
@@ -264,7 +269,7 @@ if errors.Is(err, storage.ErrNotFound) {
 
 ## 七、操作选项（Option 模式）
 
-### PutOption
+### PutOption / PutOptions
 
 ```go
 WithContentType(ct string) PutOption
@@ -274,18 +279,19 @@ WithStorageClass(sc string) PutOption        // STANDARD | IA | ARCHIVE
 WithIfNotExists() PutOption                  // 仅当 key 不存在时才写入
 ```
 
-### GetOption
+### GetOption / GetOptions
 
 ```go
 WithByteRange(start, end int64) GetOption    // Range 下载
 ```
 
-### ListOption
+### ListOption / ListOptions
 
 ```go
 WithRecursive(r bool) ListOption
 WithMaxKeys(n int64) ListOption
 WithStartAfter(k string) ListOption
+WithContinuationToken(t string) ListOption
 ```
 
 ## 八、Config、New 工厂
@@ -295,31 +301,33 @@ WithStartAfter(k string) ListOption
 ```go
 type Config struct {
     // S3 兼容后端通用字段
-    Endpoint     string
-    Region       string
-    AccessKey    string
-    SecretKey    string
-    Bucket       string
-    UseSSL       bool
+    Endpoint  string
+    Region    string
+    AccessKey string
+    SecretKey string
+    Bucket    string
+    UseSSL    bool
 
     // 本地磁盘后端
-    LocalDir string // bucket 映射为 data/ 下的子目录
+    BaseDir string // bucket 映射为 data/ 下的子目录
 
-    MaxRetries   int           // 默认 3
+    // 通用
+    BaseURL      string            // 对外公共访问基础 URL
+    MaxRetries   int               // 默认 3
     Timeout      time.Duration
     ExtraOptions map[string]string
 }
 ```
 
-> 驱动选择通过 `New("driver-name", Config{...}, PathBuilder)` 的第一个参数 `name` 传入，`Config` 结构体不包含 `Driver` 字段。常量 `DriverMinio`/`DriverCOS`/`DriverSeaweedFS`/`DriverLocal` 的类型为 `DriverType`（`string` 的命名类型），可显式用 `string(...)` 转换后传入。
+> 驱动选择通过 `New(DriverType, Config)` 的第一个参数 `name` 传入，`Config` 结构体不包含 `Driver` 字段。常量 `DriverMinio`/`DriverCOS`/`DriverSeaweedFS`/`DriverLocal` 的类型为 `DriverType`（`string` 的命名类型）。
 
-> New 的签名为 `New(name DriverType, cfg Config, pb PathBuilder) (Storage, error)`。name 为空或 pb 为 nil 时返回 `ErrInvalidConfig`。`Config.BaseURL` 已迁出，URL 拼接相关配置由 `PathBuilder` 承载（S3 后端用 `S3PathBuilder.BaseURL` / `S3PathBuilder.Endpoint`，Local 后端用 `LocalPathBuilder.BaseURL`）。
+> New 的签名为 `New(name DriverType, cfg Config) (Storage, error)`。`name` 为空时返回 `ErrInvalidConfig`。`BaseURL` 通过 `Config` 传入，由各 driver 工厂内部传递给 `PathBuilder`（S3 后端 → `S3PathBuilder.BaseURL`，Local 后端 → `LocalPathBuilder.BaseURL`），用于 `PublicURL()` 拼接。
 
 ## 九、driver 实现规范
 
-- 每个 driver 包对外只暴露内部的 `New(storage.Config, storage.PathBuilder)` 函数，并在 `init()` 中向主包注册
-- 只 import 根包（仅用于调用 Register）和各自的 SDK，以及标准库
-- 返回值中的 StoragePath 由调用方注入的 `PathBuilder` 构造，driver 不感知 URL 拼接细节
+- 每个 driver 包对外只暴露内部的 `New(storage.Config)` 函数（返回 `storage.Storage, error`）和 `NewPathBuilder(storage.Config)` 函数，并在 `init()` 中向主包注册 StorageFactory 和 PathBuilderFactory
+- 只 import 根包（仅用于调用 RegisterStorage / RegisterPathBuilder）和各自的 SDK，以及标准库
+- 返回值中的 StoragePath 由 driver 内部持有的 PathBuilder 构造，调用方不感知 URL 拼接细节
 - ETag 格式：S3 兼容后端（MinIO/COS/SeaweedFS）通过 aws-sdk-go-v2 返回原始 ETag（通常带双引号如 `"abc123"`）；Local driver 使用 hex 编码的 MD5，不带双引号
 - 错误统一通过 `fmt.Errorf("%w", ErrXxx)` 包装为 sentinel error
 
@@ -327,8 +335,11 @@ type Config struct {
 func (d *driver) PutObject(...) (*storage.PutObjectResult, error) {
     // ...
     return &storage.PutObjectResult{
-        Path: d.pb.Build(bucket, key),
-        ETag: aws.ToString(output.ETag),
+        ObjectInfo: storage.ObjectInfo{
+            Path: d.pb.Build(bucket, key),
+            // ...
+        },
+        VersionID: aws.ToString(output.VersionId),
     }, nil
 }
 
@@ -379,12 +390,12 @@ Base / Multipart 子接口保持原子性（每个方法对应一次独立的存
 
 ## 十二、Local Driver 实现思路
 
-Local Driver 将本地文件系统模拟为 S3 兼容后端。bucket 映射为 LocalDir/data/ 下的子目录，key 映射为该子目录下的相对文件路径。**元数据采用 sidecar 方案**（独立 JSON 文件），不依赖 xattr，跨平台兼容。
+Local Driver 将本地文件系统模拟为 S3 兼容后端。bucket 映射为 BaseDir/data/ 下的子目录，key 映射为该子目录下的相对文件路径。**元数据采用 sidecar 方案**（独立 JSON 文件），不依赖 xattr，跨平台兼容。
 
 ### 12.1 路径与元数据布局
 
 ```
-LocalDir     = /data/storage
+BaseDir      = /data/storage
 BaseURL      = http://localhost:8080 （可选）
 bucket       = avatars
 key          = user/123.png
@@ -400,8 +411,8 @@ sidecar 方案优先于 xattr 的理由：
 - sidecar 零额外依赖，跨 Windows/macOS/Linux 一致
 
 ```
-Path.URI():    file:///data/storage/data/avatars/user/123.png
-Path.Path():   /data/storage/data/avatars/user/123.png
+Path.URI():    file://avatars/user/123.png
+Path.Path():   avatars/user/123.png
 Path.PublicURL(): http://localhost:8080/avatars/user/123.png
 ```
 
@@ -421,7 +432,7 @@ Path.PublicURL(): http://localhost:8080/avatars/user/123.png
 用临时目录按约定结构模拟 S3 分片语义：
 
 ```
-{LocalDir}/.multipart/{uploadID}/part-{partNumber:04d}
+{BaseDir}/.multipart/{uploadID}/part-{partNumber:04d}
 ```
 
 | 阶段 | 实现 | 说明 |
@@ -476,7 +487,7 @@ testkit 只 import 根包，不 import 任何具体 driver。`RunSuite` 对任�
 | 阶段 | 交付物 | 目标周期 |
 | --- | --- | --- |
 | M1 | 根包类型定义（接口 + StoragePath + errors + options + types）+ MockDriver + 注册机制 | Week 1 |
-| M2 | MinIO driver（含分片 + PresignGetObject / PresignPutObject）+ testkit suite | Week 2 |
+| M2 | MinIO driver（含分片 + PresignGetObject / PresignPutObject）+ testkit suite + S3 通用驱动（s3driver） | Week 2 |
 | M3 | COS / SeaweedFS / Local driver | Week 3–4 |
 | M4 | Range Get 与文档完善 | Week 5 |
 | M5 | 文档、示例、集成测试 CI | Week 6 |

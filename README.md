@@ -33,18 +33,14 @@ import (
 )
 
 func main() {
-    pb := &storage.S3PathBuilder{
-        BaseURL:  "https://cdn.example.com",
-        Endpoint: "play.min.io",
-        Format:   storage.URLFormatS3,
-    }
     s, _ := storage.New(storage.DriverMinio, storage.Config{
         Endpoint:  "play.min.io",
         AccessKey: "minioadmin",
         SecretKey: "minioadmin",
         UseSSL:    true,
         Bucket:    "my-bucket",
-    }, pb)
+        BaseURL:   "https://cdn.example.com",
+    })
 
     ctx := context.Background()
     result, _ := s.PutObject(ctx, "hello.txt",
@@ -59,13 +55,10 @@ func main() {
 ### 本地磁盘
 
 ```go
-    pb := &storage.LocalPathBuilder{
-        AbsDir:  "/tmp/storage/data",
-        BaseURL: "http://localhost:8080",
-    }
     s, _ := storage.New(storage.DriverLocal, storage.Config{
         BaseDir: "/tmp/storage",
-    }, pb)
+        BaseURL: "http://localhost:8080",
+    })
 ```
 
 文件存储结构：
@@ -127,22 +120,18 @@ func (d *Driver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 | `Bucket()` | 存储桶 | `"avatars"` | `"avatars"` |
 | `Key()` | 对象键 | `"user/1.png"` | `"user/1.png"` |
 
-**切换存储**只需改 `Config` 和 `PathBuilder`，业务代码零修改：
+**切换存储**只需改 `Config`，业务代码零修改：
 
 ```go
-// 从 MinIO 切换到 COS，只改配置和 PathBuilder
-    pb := &storage.S3PathBuilder{
-        BaseURL:  "https://cdn.example.com",
-        Endpoint: "https://cos.ap-shanghai.myqcloud.com",
-        Format:   storage.URLFormatCOS,
-    }
+// 从 MinIO 切换到 COS，只改配置
     s, _ := storage.New(storage.DriverCOS, storage.Config{
         Endpoint:  "https://cos.ap-shanghai.myqcloud.com",
         Region:    "ap-shanghai",
         AccessKey: "xxx",
         SecretKey: "yyy",
         Bucket:    "my-bucket",
-    }, pb)
+        BaseURL:   "https://cdn.example.com",
+    })
 ```
 
 ## 分页列举
