@@ -17,9 +17,7 @@ import (
 
 func newTestDriver(t *testing.T) *Driver {
 	t.Helper()
-	d, err := New(storage.Config{BaseDir: t.TempDir()}, &storage.LocalPathBuilder{
-		AbsDir: filepath.Join(t.TempDir(), "data"),
-	})
+	d, err := New(storage.Config{BaseDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,9 +26,7 @@ func newTestDriver(t *testing.T) *Driver {
 
 func newTestStorage(t *testing.T) storage.Storage {
 	t.Helper()
-	d, err := New(storage.Config{BaseDir: t.TempDir()}, &storage.LocalPathBuilder{
-		AbsDir: filepath.Join(t.TempDir(), "data"),
-	})
+	d, err := New(storage.Config{BaseDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +34,7 @@ func newTestStorage(t *testing.T) storage.Storage {
 }
 
 func TestDriverNewRequiresBaseDir(t *testing.T) {
-	_, err := New(storage.Config{}, &storage.LocalPathBuilder{AbsDir: t.TempDir()})
+	_, err := New(storage.Config{})
 	if err == nil {
 		t.Fatal("expected error for empty BaseDir")
 	}
@@ -48,15 +44,11 @@ func TestDriverNewRequiresBaseDir(t *testing.T) {
 }
 
 func TestDriverRegistersSelf(t *testing.T) {
-	_, err := New(storage.Config{BaseDir: t.TempDir()}, &storage.LocalPathBuilder{
-		AbsDir: filepath.Join(t.TempDir(), "data"),
-	})
+	_, err := New(storage.Config{BaseDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := storage.New(storage.DriverLocal, storage.Config{BaseDir: t.TempDir()}, &storage.LocalPathBuilder{
-		AbsDir: filepath.Join(t.TempDir(), "data"),
-	})
+	s, err := storage.New(storage.DriverLocal, storage.Config{BaseDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("storage.New(local) = %v", err)
 	}
@@ -524,10 +516,7 @@ func TestDriverMultipartCompleteUsesProvidedPartOrder(t *testing.T) {
 }
 
 func TestDriverUsesBaseURL(t *testing.T) {
-	s, err := New(storage.Config{BaseDir: t.TempDir()}, &storage.LocalPathBuilder{
-		AbsDir:  filepath.Join(t.TempDir(), "data"),
-		BaseURL: "https://cdn.example.com",
-	})
+	s, err := New(storage.Config{BaseDir: t.TempDir(), BaseURL: "https://cdn.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}

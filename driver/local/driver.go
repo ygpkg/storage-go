@@ -21,7 +21,10 @@ import (
 	"github.com/ygpkg/storage-go/driver/internal/pathcheck"
 )
 
-func init() { storage.Register(string(storage.DriverLocal), New) }
+func init() {
+	storage.RegisterStorage(string(storage.DriverLocal), New)
+	storage.RegisterPathBuilder(string(storage.DriverLocal), NewPathBuilder)
+}
 
 // Config Local driver 独立配置。
 type Config struct {
@@ -39,13 +42,21 @@ type Driver struct {
 
 var _ storage.Storage = (*Driver)(nil)
 
-func New(cfg storage.Config, pb storage.PathBuilder) (storage.Storage, error) {
+func NewPathBuilder(cfg storage.Config) storage.PathBuilder {
+	return &storage.LocalPathBuilder{
+		AbsDir:  cfg.BaseDir,
+		BaseURL: cfg.BaseURL,
+	}
+}
+
+func New(cfg storage.Config) (storage.Storage, error) {
 	if cfg.BaseDir == "" {
 		return nil, fmt.Errorf("%w: BaseDir is required for local driver", storage.ErrInvalidConfig)
 	}
 	if err := os.MkdirAll(cfg.BaseDir, 0o755); err != nil {
 		return nil, err
 	}
+	pb := NewPathBuilder(cfg)
 	return &Driver{
 		baseDir: cfg.BaseDir,
 		keys:    newKeyLocks(),

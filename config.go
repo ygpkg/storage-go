@@ -28,7 +28,8 @@ type Config struct {
 	BaseDir string `yaml:"base_dir"` // 本地存储根目录
 
 	// 通用
-	MaxRetries   int               `yaml:"max_retries"`   // 最大重试次数
+	BaseURL     string            `yaml:"base_url"`     // 对外公共访问基础 URL
+	MaxRetries  int               `yaml:"max_retries"`  // 最大重试次数
 	Timeout      time.Duration     `yaml:"timeout"`       // 请求超时时间
 	ExtraOptions map[string]string `yaml:"extra_options"` // 驱动额外选项
 }
