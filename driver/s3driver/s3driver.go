@@ -21,15 +21,43 @@ import (
 
 // Driver 基于 aws-sdk-go-v2/service/s3 的统一 S3 驱动实现。
 type Driver struct {
-	client  *s3.Client          // S3 客户端
-	presign *s3.PresignClient   // S3 预签名客户端
-	region  string              // 区域
-	pb      storage.PathBuilder // 路径构造器，driver 不再感知 URL 拼接细节
+	client           *s3.Client
+	presign          *s3.PresignClient
+	region           string
+	pb               storage.PathBuilder
+	ifNotExistsS3Opt func(*s3.Options)
 }
 
 var _ storage.Storage = (*Driver)(nil)
 
-func New(cfg storage.Config, pb storage.PathBuilder, s3Opts ...func(*s3.Options)) (storage.Storage, error) {
+// Option 为 s3driver.New 提供可选配置。
+type Option func(*options)
+
+type options struct {
+	s3Opts           []func(*s3.Options)
+	ifNotExistsS3Opt func(*s3.Options)
+}
+
+// WithS3Options 传入 aws 原生 S3 客户端选项。
+func WithS3Options(s3Opts ...func(*s3.Options)) Option {
+	return func(o *options) {
+		o.s3Opts = append(o.s3Opts, s3Opts...)
+	}
+}
+
+// WithIfNotExistsS3Opt 设置 IfNotExists 时追加的 S3 调用选项。
+// 使用 aws 原生 func(*s3.Options) 模式，例如 COS 注入 x-cos-forbid-overwrite 头。
+func WithIfNotExistsS3Opt(s3Opt func(*s3.Options)) Option {
+	return func(o *options) {
+		o.ifNotExistsS3Opt = s3Opt
+	}
+}
+
+func New(cfg storage.Config, pb storage.PathBuilder, opts ...Option) (storage.Storage, error) {
+	o := &options{}
+	for _, opt := range opts {
+		opt(o)
+	}
 	if cfg.Endpoint == "" {
 		return nil, fmt.Errorf("%w: Endpoint is required", storage.ErrInvalidConfig)
 	}
@@ -48,18 +76,19 @@ func New(cfg storage.Config, pb storage.PathBuilder, s3Opts ...func(*s3.Options)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", storage.ErrInvalidConfig, err)
 	}
-	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(cfg.Endpoint)
-		o.UsePathStyle = usePathStyle(cfg.Endpoint)
-		for _, opt := range s3Opts {
-			opt(o)
+	client := s3.NewFromConfig(awsCfg, func(c *s3.Options) {
+		c.BaseEndpoint = aws.String(cfg.Endpoint)
+		c.UsePathStyle = usePathStyle(cfg.Endpoint)
+		for _, s3OptFn := range o.s3Opts {
+			s3OptFn(c)
 		}
 	})
 	return &Driver{
-		client:  client,
-		presign: s3.NewPresignClient(client),
-		region:  cfg.Region,
-		pb:      pb,
+		client:           client,
+		presign:          s3.NewPresignClient(client),
+		region:           cfg.Region,
+		pb:               pb,
+		ifNotExistsS3Opt: o.ifNotExistsS3Opt,
 	}, nil
 }
 
@@ -106,7 +135,11 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, body io.Read
 	if o.IfNotExists {
 		input.IfNoneMatch = aws.String("*")
 	}
-	output, err := d.client.PutObject(ctx, input)
+	putOpts := make([]func(*s3.Options), 0, 1)
+	if o.IfNotExists && d.ifNotExistsS3Opt != nil {
+		putOpts = append(putOpts, d.ifNotExistsS3Opt)
+	}
+	output, err := d.client.PutObject(ctx, input, putOpts...)
 	if err != nil {
 		if isAlreadyExistsErr(err) && o.IfNotExists {
 			return nil, fmt.Errorf("%w: %v", storage.ErrAlreadyExists, err)

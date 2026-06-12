@@ -1,4 +1,3 @@
-// Package cos 腾讯云 COS driver，基于 S3 兼容 API 和 aws-sdk-go-v2/service/s3。
 package cos
 
 import (
@@ -6,22 +5,15 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"net/url"
 	"strings"
-	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/ygpkg/storage-go"
-	"github.com/ygpkg/storage-go/driver/internal/pathcheck"
 	"github.com/ygpkg/storage-go/driver/s3driver"
 )
 
@@ -30,12 +22,11 @@ func init() {
 	storage.RegisterPathBuilder(string(storage.DriverCOS), NewPathBuilder)
 }
 
-type Driver struct {
+type driver struct {
 	*s3driver.Driver
-	client *s3.Client
 }
 
-var _ storage.Storage = (*Driver)(nil)
+var _ storage.Storage = (*driver)(nil)
 
 func NewPathBuilder(cfg storage.Config) storage.PathBuilder {
 	return &storage.S3PathBuilder{
@@ -48,30 +39,21 @@ func NewPathBuilder(cfg storage.Config) storage.PathBuilder {
 
 func New(cfg storage.Config) (storage.Storage, error) {
 	pb := NewPathBuilder(cfg)
-	inner, err := s3driver.New(cfg, pb)
+
+	inner, err := s3driver.New(cfg, pb,
+		s3driver.WithS3Options(func(o *s3.Options) {
+			o.APIOptions = append(o.APIOptions, func(s *middleware.Stack) error {
+				return s.Finalize.Add(cosContentMD5Middleware{}, middleware.Before)
+			})
+		}),
+		s3driver.WithIfNotExistsS3Opt(func(o *s3.Options) {
+			o.APIOptions = append(o.APIOptions, smithyhttp.SetHeaderValue("x-cos-forbid-overwrite", "true"))
+		}),
+	)
 	if err != nil {
 		return nil, err
 	}
-	awsCfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithRegion(cfg.Region),
-		config.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, ""),
-		),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", storage.ErrInvalidConfig, err)
-	}
-	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(cfg.Endpoint)
-		o.UsePathStyle = usePathStyle(cfg.Endpoint)
-		o.APIOptions = append(o.APIOptions, func(s *middleware.Stack) error {
-			return s.Finalize.Add(cosContentMD5Middleware{}, middleware.Before)
-		})
-	})
-	return &Driver{
-		Driver: inner.(*s3driver.Driver),
-		client: client,
-	}, nil
+	return &driver{Driver: inner.(*s3driver.Driver)}, nil
 }
 
 func usePathStyle(endpoint string) bool {
@@ -80,99 +62,6 @@ func usePathStyle(endpoint string) bool {
 		return true
 	}
 	return !strings.Contains(strings.ToLower(u.Hostname()), "myqcloud.com")
-}
-
-func (d *Driver) PutObject(ctx context.Context, bucket, key string, body io.Reader, opts ...storage.PutOption) (*storage.PutObjectResult, error) {
-	o := &storage.PutOptions{}
-	for _, opt := range opts {
-		opt(o)
-	}
-	if !o.IfNotExists {
-		return d.Driver.PutObject(ctx, bucket, key, body, opts...)
-	}
-	if err := pathcheck.ValidateBucket(bucket); err != nil {
-		return nil, err
-	}
-	if err := pathcheck.ValidateKey(key); err != nil {
-		return nil, err
-	}
-	input := &s3.PutObjectInput{
-		Bucket:       aws.String(bucket),
-		Key:          aws.String(key),
-		Body:         body,
-		ContentType:  strPtr(o.ContentType),
-		ContentMD5:   strPtr(o.ContentMD5),
-		Metadata:     o.Metadata,
-		StorageClass: types.StorageClass(o.StorageClass),
-	}
-	output, err := d.client.PutObject(ctx, input, func(o *s3.Options) {
-		o.APIOptions = append(o.APIOptions, smithyhttp.SetHeaderValue("x-cos-forbid-overwrite", "true"))
-	})
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", storage.ErrAlreadyExists, err)
-	}
-	if aws.ToString(output.ETag) == "" {
-		return nil, fmt.Errorf("%w: object already exists", storage.ErrAlreadyExists)
-	}
-	etag := trimETag(aws.ToString(output.ETag))
-	return &storage.PutObjectResult{
-		ObjectInfo: storage.ObjectInfo{
-			Path:         d.Driver.NewPath(bucket, key),
-			Size:         aws.ToInt64(output.Size),
-			ETag:         etag,
-			ContentType:  o.ContentType,
-			LastModified: time.Now(),
-			Metadata:     o.Metadata,
-		},
-		VersionID: aws.ToString(output.VersionId),
-	}, nil
-}
-
-func (d *Driver) DeleteObjects(ctx context.Context, bucket string, keys []string) error {
-	if err := pathcheck.ValidateBucket(bucket); err != nil {
-		return err
-	}
-	if len(keys) == 0 {
-		return nil
-	}
-	for _, k := range keys {
-		if err := pathcheck.ValidateKey(k); err != nil {
-			return err
-		}
-	}
-	objects := make([]types.ObjectIdentifier, len(keys))
-	for i, k := range keys {
-		objects[i] = types.ObjectIdentifier{Key: aws.String(k)}
-	}
-	output, err := d.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
-		Bucket: aws.String(bucket),
-		Delete: &types.Delete{Objects: objects},
-	})
-	if err != nil {
-		return fmt.Errorf("s3 error: %w", err)
-	}
-	if len(output.Errors) > 0 {
-		failures := make([]storage.DeleteFailure, len(output.Errors))
-		for i, e := range output.Errors {
-			failures[i] = storage.DeleteFailure{
-				Key: aws.ToString(e.Key),
-				Err: fmt.Errorf("%s: %s", aws.ToString(e.Code), aws.ToString(e.Message)),
-			}
-		}
-		return &storage.BulkDeleteError{Failures: failures}
-	}
-	return nil
-}
-
-func strPtr(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-func trimETag(etag string) string {
-	return strings.Trim(etag, "\"")
 }
 
 type cosContentMD5Middleware struct{}

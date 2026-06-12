@@ -47,5 +47,5 @@ func mapHTTPErr(statusCode int, msg string) error {
 
 func isAlreadyExistsErr(err error) bool {
 	msg := err.Error()
-	return strings.Contains(msg, "PreconditionFailed") || strings.Contains(msg, "412")
+	return strings.Contains(msg, "PreconditionFailed") || strings.Contains(msg, "412") || strings.Contains(msg, "409") || strings.Contains(msg, "NotModified") || strings.Contains(msg, "304")
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -392,6 +393,48 @@ func TestNotFound(t *testing.T) {
 	_, err := testStorage.GetObject(ctx, bucket, "nonexistent.txt")
 	if !errors.Is(err, storage.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestPublicURLAccessible(t *testing.T) {
+	data := []byte("public url test")
+	key := "publicurl/test.txt"
+	res, err := testStorage.PutObject(ctx, bucket, key, bytes.NewReader(data),
+		storage.WithContentType("text/plain"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Path == nil {
+		t.Fatal("Path is nil")
+	}
+	logStoragePath(t, "PublicURL Path", res.Path)
+
+	if res.Path.IsLocal() {
+		baseDir := os.Getenv("STORAGE_BASE_DIR")
+		if baseDir == "" {
+			baseDir = os.TempDir()
+		}
+		dataP := filepath.Join(baseDir, "data", res.Path.Bucket(), filepath.FromSlash(res.Path.Key()))
+		if _, err := os.Stat(dataP); err != nil {
+			t.Errorf("local data file should exist at %s: %v", dataP, err)
+		}
+		return
+	}
+
+	url := res.Path.PublicURL()
+	if url == "" {
+		t.Skip("PublicURL is empty, skip HTTP check")
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("HTTP request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	t.Logf("HTTP %s status: %d", url, resp.StatusCode)
+	if resp.StatusCode >= 400 {
+		t.Errorf("PublicURL %s is not accessible, status=%d", url, resp.StatusCode)
 	}
 }
 
