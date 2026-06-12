@@ -32,9 +32,11 @@ func NewPathBuilder(cfg storage.Config) storage.PathBuilder {
 }
 
 func New(cfg storage.Config) (storage.Storage, error) {
-	sd, err := s3driver.New(cfg, NewPathBuilder(cfg), func(o *s3.Options) {
-		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
-	})
+	sd, err := s3driver.New(cfg, NewPathBuilder(cfg),
+		s3driver.WithS3Options(func(o *s3.Options) {
+			o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+		}),
+	)
 	if err != nil {
 		return nil, err
 	}
