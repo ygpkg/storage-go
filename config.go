@@ -25,7 +25,8 @@ type Config struct {
 	UseSSL    bool   `yaml:"use_ssl"`    // 是否使用 SSL 连接
 
 	// 本地磁盘后端
-	BaseDir string `yaml:"base_dir"` // 本地存储根目录
+	BaseDir    string `yaml:"base_dir"`    // 本地存储根目录
+	SignSecret string `yaml:"sign_secret"` // 预签名 HMAC-SHA256 密钥，仅 local driver 使用
 
 	// 通用
 	BaseURL     string            `yaml:"base_url"`     // 对外公共访问基础 URL
