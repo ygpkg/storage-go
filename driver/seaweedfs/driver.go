@@ -5,6 +5,8 @@ import (
 	"context"
 	"io"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/ygpkg/storage-go"
 	"github.com/ygpkg/storage-go/driver/s3driver"
 )
@@ -30,7 +32,9 @@ func NewPathBuilder(cfg storage.Config) storage.PathBuilder {
 }
 
 func New(cfg storage.Config) (storage.Storage, error) {
-	sd, err := s3driver.New(cfg, NewPathBuilder(cfg))
+	sd, err := s3driver.New(cfg, NewPathBuilder(cfg), func(o *s3.Options) {
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -301,8 +300,12 @@ func TestMultipartUpload(t *testing.T) {
 	t.Logf("UploadID: %s", uid)
 
 	parts := make([]storage.CompletedPart, 0, 3)
+	partData := make([]byte, 5*1024*1024+1)
+	for i := range partData {
+		partData[i] = byte(i % 256)
+	}
 	for i := 1; i <= 3; i++ {
-		part, err := testStorage.UploadPart(ctx, bucket, key, uid, i, bytes.NewReader([]byte("part-"+fmt.Sprintf("%d", i)+"\n")))
+		part, err := testStorage.UploadPart(ctx, bucket, key, uid, i, bytes.NewReader(partData))
 		if err != nil {
 			t.Fatal(err)
 		}
