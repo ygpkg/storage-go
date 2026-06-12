@@ -20,15 +20,17 @@ import (
 
 var (
 	testStorage storage.Storage
-	bucket      string
+	testBucket  string
 )
 
 var ctx = context.Background()
 
+const defaultDriverLocal = string(storage.DriverLocal)
+
 func loadConfig() (storage.DriverType, storage.Config, string) {
 	driverName := os.Getenv("STORAGE_DRIVER")
 	if driverName == "" {
-		driverName = "local"
+		driverName = defaultDriverLocal
 	}
 
 	cfg := storage.Config{
@@ -42,7 +44,7 @@ func loadConfig() (storage.DriverType, storage.Config, string) {
 
 	bucket := os.Getenv("STORAGE_BUCKET")
 
-	if driverName == "local" {
+	if driverName == defaultDriverLocal {
 		if cfg.BaseDir == "" {
 			cfg.BaseDir = os.TempDir()
 		}
@@ -62,7 +64,7 @@ func TestMain(m *testing.M) {
 	if bucketName == "" {
 		panic("bucket is required: set STORAGE_BUCKET env or configure .env.test")
 	}
-	bucket = bucketName
+	testBucket = bucketName
 	s, err := storage.New(driverType, cfg)
 	if err != nil {
 		panic("storage.New: " + err.Error())
@@ -73,7 +75,7 @@ func TestMain(m *testing.M) {
 
 func TestPutGet(t *testing.T) {
 	data := []byte("hello storagetest")
-	res, err := testStorage.PutObject(ctx, bucket, "putget.txt", bytes.NewReader(data), storage.WithContentType("text/plain"))
+	res, err := testStorage.PutObject(ctx, testBucket, "putget.txt", bytes.NewReader(data), storage.WithContentType("text/plain"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +90,7 @@ func TestPutGet(t *testing.T) {
 		t.Error("ETag is empty")
 	}
 
-	got, err := testStorage.GetObject(ctx, bucket, "putget.txt")
+	got, err := testStorage.GetObject(ctx, testBucket, "putget.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,10 +109,10 @@ func TestPutGet(t *testing.T) {
 }
 
 func TestPutGetWithIfNotExists(t *testing.T) {
-	_ = testStorage.DeleteObject(ctx, bucket, "ifnotexists.txt")
+	_ = testStorage.DeleteObject(ctx, testBucket, "ifnotexists.txt")
 
 	data := []byte("hello ifnotexists")
-	res, err := testStorage.PutObject(ctx, bucket, "ifnotexists.txt", bytes.NewReader(data),
+	res, err := testStorage.PutObject(ctx, testBucket, "ifnotexists.txt", bytes.NewReader(data),
 		storage.WithIfNotExists(),
 		storage.WithContentType("text/plain"),
 	)
@@ -120,7 +122,7 @@ func TestPutGetWithIfNotExists(t *testing.T) {
 	logStoragePath(t, "IfNotExists Path (1st)", res.Path)
 
 	// 第二次带 IfNotExists 应返回冲突
-	_, err = testStorage.PutObject(ctx, bucket, "ifnotexists.txt", bytes.NewReader([]byte("another")),
+	_, err = testStorage.PutObject(ctx, testBucket, "ifnotexists.txt", bytes.NewReader([]byte("another")),
 		storage.WithIfNotExists(),
 	)
 	if err == nil {
@@ -134,7 +136,7 @@ func TestPutGetWithIfNotExists(t *testing.T) {
 
 func TestPutGetWithContentMD5(t *testing.T) {
 	data := []byte("hello md5")
-	res, err := testStorage.PutObject(ctx, bucket, "withmd5.txt", bytes.NewReader(data),
+	res, err := testStorage.PutObject(ctx, testBucket, "withmd5.txt", bytes.NewReader(data),
 		storage.WithContentMD5("dB/GsYeOIINGNZr1At0RxQ=="), // "hello md5" 的 MD5
 		storage.WithContentType("text/plain"),
 	)
@@ -144,7 +146,7 @@ func TestPutGetWithContentMD5(t *testing.T) {
 	logStoragePath(t, "MD5 Path", res.Path)
 
 	// 错误的 MD5
-	_, err = testStorage.PutObject(ctx, bucket, "badmd5.txt", bytes.NewReader(data),
+	_, err = testStorage.PutObject(ctx, testBucket, "badmd5.txt", bytes.NewReader(data),
 		storage.WithContentMD5("AAAAAAAAAAAAAAAAAAAAAA=="),
 	)
 	if err == nil {
@@ -154,13 +156,13 @@ func TestPutGetWithContentMD5(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	testStorage.PutObject(ctx, bucket, "delete.txt", bytes.NewReader([]byte("x")), storage.WithContentType("text/plain"))
+	testStorage.PutObject(ctx, testBucket, "delete.txt", bytes.NewReader([]byte("x")), storage.WithContentType("text/plain"))
 
-	err := testStorage.DeleteObject(ctx, bucket, "delete.txt")
+	err := testStorage.DeleteObject(ctx, testBucket, "delete.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = testStorage.GetObject(ctx, bucket, "delete.txt")
+	_, err = testStorage.GetObject(ctx, testBucket, "delete.txt")
 	if !errors.Is(err, storage.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -169,15 +171,15 @@ func TestDelete(t *testing.T) {
 func TestDeleteObjects(t *testing.T) {
 	keys := []string{"bulk/a.txt", "bulk/b.txt", "bulk/c.txt"}
 	for _, k := range keys {
-		testStorage.PutObject(ctx, bucket, k, bytes.NewReader([]byte("x")), storage.WithContentType("text/plain"))
+		testStorage.PutObject(ctx, testBucket, k, bytes.NewReader([]byte("x")), storage.WithContentType("text/plain"))
 	}
 
-	err := testStorage.DeleteObjects(ctx, bucket, keys)
+	err := testStorage.DeleteObjects(ctx, testBucket, keys)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, k := range keys {
-		_, err = testStorage.GetObject(ctx, bucket, k)
+		_, err = testStorage.GetObject(ctx, testBucket, k)
 		if !errors.Is(err, storage.ErrNotFound) {
 			t.Errorf("key %q should be deleted, got %v", k, err)
 		}
@@ -187,10 +189,10 @@ func TestDeleteObjects(t *testing.T) {
 func TestListRecursive(t *testing.T) {
 	keys := []string{"list/recursive/a.txt", "list/recursive/b.txt", "list/recursive/c/d.txt"}
 	for _, k := range keys {
-		testStorage.PutObject(ctx, bucket, k, bytes.NewReader([]byte("x")), storage.WithContentType("text/plain"))
+		testStorage.PutObject(ctx, testBucket, k, bytes.NewReader([]byte("x")), storage.WithContentType("text/plain"))
 	}
 
-	out, err := testStorage.ListObjects(ctx, bucket, "list/", storage.WithRecursive(true))
+	out, err := testStorage.ListObjects(ctx, testBucket, "list/", storage.WithRecursive(true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,10 +204,10 @@ func TestListRecursive(t *testing.T) {
 func TestListNonRecursive(t *testing.T) {
 	keys := []string{"list2/folder/a.txt", "list2/folder/b.txt", "list2/top.txt"}
 	for _, k := range keys {
-		testStorage.PutObject(ctx, bucket, k, bytes.NewReader([]byte("x")), storage.WithContentType("text/plain"))
+		testStorage.PutObject(ctx, testBucket, k, bytes.NewReader([]byte("x")), storage.WithContentType("text/plain"))
 	}
 
-	out, err := testStorage.ListObjects(ctx, bucket, "list2/")
+	out, err := testStorage.ListObjects(ctx, testBucket, "list2/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,18 +218,18 @@ func TestListContinuationToken(t *testing.T) {
 	prefix := "token/list/"
 	for i := byte(0); i < 10; i++ {
 		key := prefix + string('a'+i) + ".txt"
-		testStorage.PutObject(ctx, bucket, key, bytes.NewReader([]byte("x")), storage.WithContentType("text/plain"))
+		testStorage.PutObject(ctx, testBucket, key, bytes.NewReader([]byte("x")), storage.WithContentType("text/plain"))
 	}
 
 	// 第一页
-	out1, err := testStorage.ListObjects(ctx, bucket, prefix, storage.WithRecursive(true), storage.WithMaxKeys(3))
+	out1, err := testStorage.ListObjects(ctx, testBucket, prefix, storage.WithRecursive(true), storage.WithMaxKeys(3))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("Page1: %d contents, truncated=%v", len(out1.Contents), out1.IsTruncated)
 
 	if out1.IsTruncated && out1.NextContinuationToken != "" {
-		out2, err := testStorage.ListObjects(ctx, bucket, prefix,
+		out2, err := testStorage.ListObjects(ctx, testBucket, prefix,
 			storage.WithRecursive(true),
 			storage.WithMaxKeys(10),
 			storage.WithContinuationToken(out1.NextContinuationToken),
@@ -242,10 +244,10 @@ func TestListContinuationToken(t *testing.T) {
 func TestListStartAfter(t *testing.T) {
 	prefix := "liststart/"
 	for _, c := range []string{"a", "b", "c", "d", "e"} {
-		testStorage.PutObject(ctx, bucket, prefix+c+".txt", bytes.NewReader([]byte("x")), storage.WithContentType("text/plain"))
+		testStorage.PutObject(ctx, testBucket, prefix+c+".txt", bytes.NewReader([]byte("x")), storage.WithContentType("text/plain"))
 	}
 
-	out, err := testStorage.ListObjects(ctx, bucket, prefix, storage.WithRecursive(true), storage.WithStartAfter(prefix+"b.txt"))
+	out, err := testStorage.ListObjects(ctx, testBucket, prefix, storage.WithRecursive(true), storage.WithStartAfter(prefix+"b.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,9 +260,9 @@ func TestListStartAfter(t *testing.T) {
 }
 
 func TestHeadObject(t *testing.T) {
-	testStorage.PutObject(ctx, bucket, "head.txt", bytes.NewReader([]byte("hello")), storage.WithContentType("text/plain"))
+	testStorage.PutObject(ctx, testBucket, "head.txt", bytes.NewReader([]byte("hello")), storage.WithContentType("text/plain"))
 
-	info, err := testStorage.HeadObject(ctx, bucket, "head.txt")
+	info, err := testStorage.HeadObject(ctx, testBucket, "head.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,14 +276,14 @@ func TestHeadObject(t *testing.T) {
 
 func TestCopyObject(t *testing.T) {
 	data := []byte("copy me")
-	testStorage.PutObject(ctx, bucket, "copy/src.txt", bytes.NewReader(data), storage.WithContentType("text/plain"))
+	testStorage.PutObject(ctx, testBucket, "copy/src.txt", bytes.NewReader(data), storage.WithContentType("text/plain"))
 
-	err := testStorage.CopyObject(ctx, bucket, "copy/src.txt", bucket, "copy/dst.txt")
+	err := testStorage.CopyObject(ctx, testBucket, "copy/src.txt", testBucket, "copy/dst.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := testStorage.GetObject(ctx, bucket, "copy/dst.txt")
+	got, err := testStorage.GetObject(ctx, testBucket, "copy/dst.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +296,7 @@ func TestCopyObject(t *testing.T) {
 
 func TestMultipartUpload(t *testing.T) {
 	key := "multipart/test.dat"
-	uid, err := testStorage.CreateMultipartUpload(ctx, bucket, key, storage.WithContentType("application/octet-stream"))
+	uid, err := testStorage.CreateMultipartUpload(ctx, testBucket, key, storage.WithContentType("application/octet-stream"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,19 +308,19 @@ func TestMultipartUpload(t *testing.T) {
 		partData[i] = byte(i % 256)
 	}
 	for i := 1; i <= 3; i++ {
-		part, err := testStorage.UploadPart(ctx, bucket, key, uid, i, bytes.NewReader(partData))
+		part, err := testStorage.UploadPart(ctx, testBucket, key, uid, i, bytes.NewReader(partData))
 		if err != nil {
 			t.Fatal(err)
 		}
 		parts = append(parts, *part)
 	}
 
-	err = testStorage.CompleteMultipartUpload(ctx, bucket, key, uid, parts)
+	err = testStorage.CompleteMultipartUpload(ctx, testBucket, key, uid, parts)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := testStorage.GetObject(ctx, bucket, key)
+	got, err := testStorage.GetObject(ctx, testBucket, key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,22 +334,22 @@ func TestMultipartUpload(t *testing.T) {
 
 func TestMultipartAbort(t *testing.T) {
 	key := "multipart/abort.dat"
-	uid, err := testStorage.CreateMultipartUpload(ctx, bucket, key)
+	uid, err := testStorage.CreateMultipartUpload(ctx, testBucket, key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = testStorage.UploadPart(ctx, bucket, key, uid, 1, bytes.NewReader([]byte("p1")))
+	_, err = testStorage.UploadPart(ctx, testBucket, key, uid, 1, bytes.NewReader([]byte("p1")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = testStorage.AbortMultipartUpload(ctx, bucket, key, uid)
+	err = testStorage.AbortMultipartUpload(ctx, testBucket, key, uid)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// SeaweedFS 的 AbortMultipartUpload 是异步清理，不会立即拒绝后续 UploadPart
-	if os.Getenv("STORAGE_DRIVER") != "seaweedfs" {
-		_, err = testStorage.UploadPart(ctx, bucket, key, uid, 2, bytes.NewReader([]byte("p2")))
+	if os.Getenv("STORAGE_DRIVER") != string(storage.DriverSeaweedFS) {
+		_, err = testStorage.UploadPart(ctx, testBucket, key, uid, 2, bytes.NewReader([]byte("p2")))
 		if err == nil {
 			t.Fatal("expected error for aborted upload")
 		}
@@ -356,9 +358,9 @@ func TestMultipartAbort(t *testing.T) {
 
 func TestPresignGetObject(t *testing.T) {
 	key := "presign/get.txt"
-	testStorage.PutObject(ctx, bucket, key, bytes.NewReader([]byte("presign")), storage.WithContentType("text/plain"))
+	testStorage.PutObject(ctx, testBucket, key, bytes.NewReader([]byte("presign")), storage.WithContentType("text/plain"))
 
-	url, err := testStorage.PresignGetObject(ctx, bucket, key, 1*time.Hour)
+	url, err := testStorage.PresignGetObject(ctx, testBucket, key, 1*time.Hour)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotSupported) {
 			t.Skip("presign not supported")
@@ -379,7 +381,7 @@ func TestPresignGetObject(t *testing.T) {
 
 func TestPresignPutObject(t *testing.T) {
 	key := "presign/put.txt"
-	url, err := testStorage.PresignPutObject(ctx, bucket, key, 1*time.Hour)
+	url, err := testStorage.PresignPutObject(ctx, testBucket, key, 1*time.Hour)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotSupported) {
 			t.Skip("presign not supported")
@@ -390,7 +392,7 @@ func TestPresignPutObject(t *testing.T) {
 }
 
 func TestNotFound(t *testing.T) {
-	_, err := testStorage.GetObject(ctx, bucket, "nonexistent.txt")
+	_, err := testStorage.GetObject(ctx, testBucket, "nonexistent.txt")
 	if !errors.Is(err, storage.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -399,7 +401,7 @@ func TestNotFound(t *testing.T) {
 func TestPublicURLAccessible(t *testing.T) {
 	data := []byte("public url test")
 	key := "publicurl/test.txt"
-	res, err := testStorage.PutObject(ctx, bucket, key, bytes.NewReader(data),
+	res, err := testStorage.PutObject(ctx, testBucket, key, bytes.NewReader(data),
 		storage.WithContentType("text/plain"))
 	if err != nil {
 		t.Fatal(err)
