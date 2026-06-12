@@ -2,8 +2,24 @@ package storage
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
+
+// ParseURI 将 s3://bucket/key 或 file://bucket/key 格式的 URI 解析为 scheme、bucket、key。
+func ParseURI(uri string) (scheme, bucket, key string, err error) {
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", "", "", ErrInvalidPath
+	}
+	switch u.Scheme {
+	case SchemeS3, SchemeFile:
+	default:
+		return "", "", "", ErrInvalidPath
+	}
+	key = strings.TrimPrefix(u.Path, "/")
+	return u.Scheme, u.Host, key, nil
+}
 
 // StoragePath 是存储路径的统一载体，仅出现在返回值中。
 // 由 driver 内部从 bucket、key 组装后返回，不作为接口入参。
