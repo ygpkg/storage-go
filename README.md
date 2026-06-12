@@ -17,48 +17,81 @@
 go get github.com/ygpkg/storage-go
 ```
 
-## 快速开始
+## 使用
+
+### 驱动注册
+
+使用前需要通过 blank import 引入对应 driver 包，driver 在 `init()` 中自动向注册表注册：
+
+```go
+import "github.com/ygpkg/storage-go"
+import _ "github.com/ygpkg/storage-go/driver/minio" // 注册 MinIO 驱动
+```
 
 ### MinIO
 
 ```go
-package main
+s, _ := storage.New(storage.DriverMinio, storage.Config{
+    Endpoint:  "play.min.io",
+    AccessKey: "minioadmin",
+    SecretKey: "minioadmin",
+    UseSSL:    true,
+    Bucket:    "my-bucket",
+    BaseURL:   "https://cdn.example.com",
+})
 
-import (
-    "context"
-    "fmt"
-    "strings"
-
-    "github.com/ygpkg/storage-go"
+ctx := context.Background()
+result, _ := s.PutObject(ctx, "hello.txt",
+    strings.NewReader("Hello, Storage!"),
+    storage.WithContentType("text/plain"),
 )
-
-func main() {
-    s, _ := storage.New(storage.DriverMinio, storage.Config{
-        Endpoint:  "play.min.io",
-        AccessKey: "minioadmin",
-        SecretKey: "minioadmin",
-        UseSSL:    true,
-        Bucket:    "my-bucket",
-        BaseURL:   "https://cdn.example.com",
-    })
-
-    ctx := context.Background()
-    result, _ := s.PutObject(ctx, "hello.txt",
-        strings.NewReader("Hello, Storage!"),
-        storage.WithContentType("text/plain"),
-    )
-    fmt.Println(result.Path.URI())        // s3://my-bucket/hello.txt
-    fmt.Println(result.Path.PublicURL())  // https://cdn.example.com/my-bucket/hello.txt
-}
+fmt.Println(result.Path.URI())        // s3://my-bucket/hello.txt
+fmt.Println(result.Path.PublicURL())  // https://cdn.example.com/my-bucket/hello.txt
 ```
+
+### 腾讯云 COS
+
+```go
+import _ "github.com/ygpkg/storage-go/driver/cos"
+
+s, _ := storage.New(storage.DriverCOS, storage.Config{
+    Endpoint:  "https://cos.ap-shanghai.myqcloud.com",
+    Region:    "ap-shanghai",
+    AccessKey: "xxx",
+    SecretKey: "yyy",
+    Bucket:    "my-bucket-1250000000",
+    BaseURL:   "https://cdn.example.com",
+})
+```
+
+COS 使用虚拟主机式 URL，`PublicURL()` 返回 `{baseURL}/{key}`（不含 bucket 路径段）。当 `baseURL` 为空时，自动推导为 `https://{bucket}.cos.{region}.myqcloud.com/{key}`。
+
+COS 内置 `Content-MD5` middleware（DeleteObjects 请求自动计算 MD5），以及 `x-cos-forbid-overwrite` 请求头（配合 `WithIfNotExists()`）。
+
+### SeaweedFS
+
+```go
+import _ "github.com/ygpkg/storage-go/driver/seaweedfs"
+
+s, _ := storage.New(storage.DriverSeaweedFS, storage.Config{
+    Endpoint:  "http://localhost:8333",
+    AccessKey: "xxx",
+    SecretKey: "yyy",
+    Bucket:    "my-bucket",
+})
+```
+
+SeaweedFS 不原生支持 `IfNoneMatch`，`WithIfNotExists()` 通过先调用 `HeadObject` 前置检查实现。
 
 ### 本地磁盘
 
 ```go
-    s, _ := storage.New(storage.DriverLocal, storage.Config{
-        BaseDir: "/tmp/storage",
-        BaseURL: "http://localhost:8080",
-    })
+import _ "github.com/ygpkg/storage-go/driver/local"
+
+s, _ := storage.New(storage.DriverLocal, storage.Config{
+    BaseDir: "/tmp/storage",
+    BaseURL: "http://localhost:8080",
+})
 ```
 
 文件存储结构：
@@ -70,11 +103,11 @@ func main() {
 └── .multipart/{uploadID}/        # 分片上传临时目录
 ```
 
-### 本地磁盘对外访问
+#### 本地磁盘对外访问
 
 Local 驱动的 `PublicURL()` 返回 `{BaseURL}/{bucket}/{key}` 格式的逻辑 URL。要让该 URL 可访问，需要自行搭建 HTTP 服务将请求路径映射到数据目录。
 
-#### 方案一：Go 的 `http.FileServer`
+##### 方案一：Go 的 `http.FileServer`
 
 ```go
 // BaseDir 为 /tmp/storage，BaseURL 为 http://localhost:8080
@@ -86,7 +119,7 @@ http.ListenAndServe(":8080", nil)
 // 即可直接访问到 /tmp/storage/data/my-bucket/hello.txt
 ```
 
-#### 方案二：Nginx 反向代理
+##### 方案二：Nginx 反向代理
 
 ```nginx
 location / {
@@ -94,7 +127,7 @@ location / {
 }
 ```
 
-#### 方案三：自定义 ServeHTTP 方法
+##### 方案三：自定义 ServeHTTP 方法
 
 为 Driver 实现 `http.Handler` 接口：
 
@@ -102,6 +135,23 @@ location / {
 func (d *Driver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     // 从 URL 路径解析 bucket 和 key，调用 GetObject 返回内容
 }
+```
+
+### 切换存储后端
+
+只需改 `DriverType` 和 `Config`，业务代码零修改：
+
+```go
+// 从 MinIO 切换到 COS，只改导入和配置
+import _ "github.com/ygpkg/storage-go/driver/cos"
+
+s, _ := storage.New(storage.DriverCOS, storage.Config{
+    Endpoint:  "https://cos.ap-shanghai.myqcloud.com",
+    Region:    "ap-shanghai",
+    AccessKey: "xxx",
+    SecretKey: "yyy",
+    Bucket:    "my-bucket",
+})
 ```
 
 ## 核心概念
@@ -120,19 +170,30 @@ func (d *Driver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 | `Bucket()` | 存储桶 | `"avatars"` | `"avatars"` |
 | `Key()` | 对象键 | `"user/1.png"` | `"user/1.png"` |
 
-**切换存储**只需改 `Config`，业务代码零修改：
+### URLStyle（PublicURL 拼接风格）
+
+S3 兼容后端的 `PublicURL()` 拼接方式由 `URLStyle` 控制：
+
+| 风格 | 格式 | 适用 |
+|------|------|------|
+| `path` | `{base}/{bucket}/{key}` | MinIO、SeaweedFS |
+| `virtual-hosted` | `{base}/{key}`（bucket 在域名中） | COS |
+
+各 driver 在构造 `S3PathBuilder` 时自动设置，调用方无需关心。
+
+### ParseURI
+
+将 URI 字符串解析为 `(scheme, bucket, key)`：
 
 ```go
-// 从 MinIO 切换到 COS，只改配置
-    s, _ := storage.New(storage.DriverCOS, storage.Config{
-        Endpoint:  "https://cos.ap-shanghai.myqcloud.com",
-        Region:    "ap-shanghai",
-        AccessKey: "xxx",
-        SecretKey: "yyy",
-        Bucket:    "my-bucket",
-        BaseURL:   "https://cdn.example.com",
-    })
+scheme, bucket, key, err := storage.ParseURI("s3://my-bucket/path/to/file")
+// scheme="s3", bucket="my-bucket", key="path/to/file"
+
+scheme, bucket, key, err = storage.ParseURI("file://avatars/user/1.png")
+// scheme="file", bucket="avatars", key="user/1.png"
 ```
+
+目前支持 `s3://` 和 `file://` 两种 scheme。
 
 ## 分页列举
 
@@ -143,6 +204,18 @@ out, _ := s.ListObjects(ctx, "my-bucket", "prefix/",
 )
 for _, obj := range out.Contents {
     fmt.Println(obj.Path.Key())
+}
+```
+
+分页通过 `NextContinuationToken` + `WithContinuationToken` 实现：
+
+```go
+out, _ := s.ListObjects(ctx, bucket, prefix, storage.WithMaxKeys(10))
+for out.IsTruncated {
+    out, _ = s.ListObjects(ctx, bucket, prefix,
+        storage.WithMaxKeys(10),
+        storage.WithContinuationToken(out.NextContinuationToken),
+    )
 }
 ```
 
