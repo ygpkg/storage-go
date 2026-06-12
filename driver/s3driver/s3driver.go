@@ -15,7 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-
 	"github.com/ygpkg/storage-go"
 	"github.com/ygpkg/storage-go/driver/internal/pathcheck"
 )
@@ -30,7 +29,7 @@ type Driver struct {
 
 var _ storage.Storage = (*Driver)(nil)
 
-func New(cfg storage.Config, pb storage.PathBuilder) (storage.Storage, error) {
+func New(cfg storage.Config, pb storage.PathBuilder, s3Opts ...func(*s3.Options)) (storage.Storage, error) {
 	if cfg.Endpoint == "" {
 		return nil, fmt.Errorf("%w: Endpoint is required", storage.ErrInvalidConfig)
 	}
@@ -52,6 +51,9 @@ func New(cfg storage.Config, pb storage.PathBuilder) (storage.Storage, error) {
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(cfg.Endpoint)
 		o.UsePathStyle = usePathStyle(cfg.Endpoint)
+		for _, opt := range s3Opts {
+			opt(o)
+		}
 	})
 	return &Driver{
 		client:  client,
