@@ -21,11 +21,11 @@ import (
 
 // Driver 基于 aws-sdk-go-v2/service/s3 的统一 S3 驱动实现。
 type Driver struct {
-	client             *s3.Client
-	presign            *s3.PresignClient
-	region             string
-	pb                 storage.PathBuilder
-	ifNotExistsS3Opts  func(*s3.Options)
+	client           *s3.Client
+	presign          *s3.PresignClient
+	region           string
+	pb               storage.PathBuilder
+	ifNotExistsS3Opt func(*s3.Options)
 }
 
 var _ storage.Storage = (*Driver)(nil)
@@ -34,8 +34,8 @@ var _ storage.Storage = (*Driver)(nil)
 type Option func(*options)
 
 type options struct {
-	s3Opts            []func(*s3.Options)
-	ifNotExistsS3Opts func(*s3.Options)
+	s3Opts           []func(*s3.Options)
+	ifNotExistsS3Opt func(*s3.Options)
 }
 
 // WithS3Options 传入 aws 原生 S3 客户端选项。
@@ -45,11 +45,11 @@ func WithS3Options(s3Opts ...func(*s3.Options)) Option {
 	}
 }
 
-// WithIfNotExistsS3Opts 设置 IfNotExists 时追加的 S3 调用选项。
+// WithIfNotExistsS3Opt 设置 IfNotExists 时追加的 S3 调用选项。
 // 使用 aws 原生 func(*s3.Options) 模式，例如 COS 注入 x-cos-forbid-overwrite 头。
-func WithIfNotExistsS3Opts(s3Opt func(*s3.Options)) Option {
+func WithIfNotExistsS3Opt(s3Opt func(*s3.Options)) Option {
 	return func(o *options) {
-		o.ifNotExistsS3Opts = s3Opt
+		o.ifNotExistsS3Opt = s3Opt
 	}
 }
 
@@ -84,11 +84,11 @@ func New(cfg storage.Config, pb storage.PathBuilder, opts ...Option) (storage.St
 		}
 	})
 	return &Driver{
-		client:            client,
-		presign:           s3.NewPresignClient(client),
-		region:            cfg.Region,
-		pb:                pb,
-		ifNotExistsS3Opts: o.ifNotExistsS3Opts,
+		client:           client,
+		presign:          s3.NewPresignClient(client),
+		region:           cfg.Region,
+		pb:               pb,
+		ifNotExistsS3Opt: o.ifNotExistsS3Opt,
 	}, nil
 }
 
@@ -136,8 +136,8 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, body io.Read
 		input.IfNoneMatch = aws.String("*")
 	}
 	putOpts := make([]func(*s3.Options), 0, 1)
-	if o.IfNotExists && d.ifNotExistsS3Opts != nil {
-		putOpts = append(putOpts, d.ifNotExistsS3Opts)
+	if o.IfNotExists && d.ifNotExistsS3Opt != nil {
+		putOpts = append(putOpts, d.ifNotExistsS3Opt)
 	}
 	output, err := d.client.PutObject(ctx, input, putOpts...)
 	if err != nil {

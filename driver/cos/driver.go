@@ -46,7 +46,7 @@ func New(cfg storage.Config) (storage.Storage, error) {
 				return s.Finalize.Add(cosContentMD5Middleware{}, middleware.Before)
 			})
 		}),
-		s3driver.WithIfNotExistsS3Opts(func(o *s3.Options) {
+		s3driver.WithIfNotExistsS3Opt(func(o *s3.Options) {
 			o.APIOptions = append(o.APIOptions, smithyhttp.SetHeaderValue("x-cos-forbid-overwrite", "true"))
 		}),
 	)
