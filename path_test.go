@@ -117,6 +117,97 @@ func TestLocalPathBuilder_Build(t *testing.T) {
 	}
 }
 
+func TestParseURI_S3(t *testing.T) {
+	scheme, bucket, key, err := ParseURI("s3://mybucket/user/1.png")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if scheme != "s3" {
+		t.Errorf("scheme = %q, want s3", scheme)
+	}
+	if bucket != "mybucket" {
+		t.Errorf("bucket = %q, want mybucket", bucket)
+	}
+	if key != "user/1.png" {
+		t.Errorf("key = %q, want user/1.png", key)
+	}
+}
+
+func TestParseURI_File(t *testing.T) {
+	scheme, bucket, key, err := ParseURI("file://avatars/data.json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if scheme != "file" {
+		t.Errorf("scheme = %q, want file", scheme)
+	}
+	if bucket != "avatars" {
+		t.Errorf("bucket = %q, want avatars", bucket)
+	}
+	if key != "data.json" {
+		t.Errorf("key = %q, want data.json", key)
+	}
+}
+
+func TestParseURI_NestedKey(t *testing.T) {
+	_, bucket, key, err := ParseURI("s3://b/a/b/c/d.txt")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bucket != "b" {
+		t.Errorf("bucket = %q, want b", bucket)
+	}
+	if key != "a/b/c/d.txt" {
+		t.Errorf("key = %q, want a/b/c/d.txt", key)
+	}
+}
+
+func TestParseURI_EncodedKey(t *testing.T) {
+	_, _, key, err := ParseURI("s3://b/a%20b.png")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if key != "a b.png" {
+		t.Errorf("key = %q, want a b.png (decoded)", key)
+	}
+}
+
+func TestParseURI_EmptyKey(t *testing.T) {
+	_, _, key, err := ParseURI("s3://mybucket/")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if key != "" {
+		t.Errorf("key = %q, want empty", key)
+	}
+}
+
+func TestParseURI_Invalid(t *testing.T) {
+	tests := []string{
+		"",
+		"no-scheme",
+		"://nobucket",
+		"s3://",
+		"ftp://bucket/key",
+	}
+	for _, uri := range tests {
+		_, _, _, err := ParseURI(uri)
+		if err == nil {
+			t.Errorf("ParseURI(%q) should return error", uri)
+		}
+	}
+}
+
+func TestParseURI_NoKey(t *testing.T) {
+	scheme, bucket, key, err := ParseURI("s3://mybucket")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if scheme != "s3" || bucket != "mybucket" || key != "" {
+		t.Errorf("got (%q, %q, %q), want (s3, mybucket, \"\")", scheme, bucket, key)
+	}
+}
+
 func TestLocalPathBuilder_BuildNoHTTPBase(t *testing.T) {
 	pb := &LocalPathBuilder{
 		AbsDir:  "/data/storage",
