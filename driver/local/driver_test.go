@@ -5,23 +5,25 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ygpkg/storage-go"
 )
 
-func newTestDriver(t *testing.T) *Driver {
+func newTestDriver(t *testing.T) *driver {
 	t.Helper()
 	d, err := New(storage.Config{BaseDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return d.(*Driver)
+	return d.(*driver)
 }
 
 func newTestStorage(t *testing.T) storage.Storage {
@@ -141,7 +143,7 @@ func TestDriverCopySameBucket(t *testing.T) {
 	}
 }
 
-func TestDriverPresignNotSupported(t *testing.T) {
+func TestDriverPresignWithoutSecret(t *testing.T) {
 	d := newTestDriver(t)
 	ctx := context.Background()
 	if _, err := d.PresignGetObject(ctx, "bkt", "k1", 60); !errors.Is(err, storage.ErrNotSupported) {
@@ -521,7 +523,7 @@ func TestDriverUsesBaseURL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d := s.(*Driver)
+	d := s.(*driver)
 	ctx := context.Background()
 	res, err := d.PutObject(ctx, "bkt", "asset.png", bytes.NewReader([]byte("x")))
 	if err != nil {
@@ -609,5 +611,134 @@ func TestDriverDeleteObjectsSurfacesBulkFailure(t *testing.T) {
 	}
 	if len(bulk.Failures) != 1 || bulk.Failures[0].Key != "stuck.txt" {
 		t.Fatalf("failures = %+v, want exactly stuck.txt", bulk.Failures)
+	}
+}
+
+func newTestDriverWithSecret(t *testing.T) *driver {
+	t.Helper()
+	d, err := New(storage.Config{BaseDir: t.TempDir(), BaseURL: "https://example.com", SignSecret: "test-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d.(*driver)
+}
+
+func TestDriverPresignGetObject(t *testing.T) {
+	d := newTestDriverWithSecret(t)
+	ctx := context.Background()
+
+	u, err := d.PresignGetObject(ctx, "bkt", "k1", 60*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := parsed.Query().Get("token")
+	expires := parsed.Query().Get("expires")
+	if token == "" || expires == "" {
+		t.Fatal("token or expires missing from presigned url")
+	}
+
+	err = d.VerifyPresignedToken("bkt", "k1", presignOpGet, token, expires)
+	if err != nil {
+		t.Errorf("VerifyPresignedToken = %v", err)
+	}
+}
+
+func TestDriverPresignPutObject(t *testing.T) {
+	d := newTestDriverWithSecret(t)
+	ctx := context.Background()
+
+	u, err := d.PresignPutObject(ctx, "bkt", "k1", 60*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := parsed.Query().Get("token")
+	expires := parsed.Query().Get("expires")
+
+	err = d.VerifyPresignedToken("bkt", "k1", presignOpPut, token, expires)
+	if err != nil {
+		t.Errorf("VerifyPresignedToken = %v", err)
+	}
+}
+
+func TestDriverPresignOpMismatch(t *testing.T) {
+	d := newTestDriverWithSecret(t)
+	ctx := context.Background()
+
+	u, err := d.PresignGetObject(ctx, "bkt", "k1", 60*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(u)
+	token := parsed.Query().Get("token")
+	expires := parsed.Query().Get("expires")
+
+	err = d.VerifyPresignedToken("bkt", "k1", presignOpPut, token, expires)
+	if !errors.Is(err, ErrPresignOpMismatch) {
+		t.Errorf("err = %v, want ErrPresignOpMismatch", err)
+	}
+}
+
+func TestDriverPresignExpired(t *testing.T) {
+	d := newTestDriverWithSecret(t)
+	ctx := context.Background()
+
+	u, err := d.PresignGetObject(ctx, "bkt", "k1", 1*time.Nanosecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(u)
+	token := parsed.Query().Get("token")
+	expires := parsed.Query().Get("expires")
+
+	time.Sleep(10 * time.Millisecond)
+
+	err = d.VerifyPresignedToken("bkt", "k1", presignOpGet, token, expires)
+	if !errors.Is(err, ErrPresignExpired) {
+		t.Errorf("err = %v, want ErrPresignExpired", err)
+	}
+}
+
+func TestDriverPresignKeyMismatch(t *testing.T) {
+	d := newTestDriverWithSecret(t)
+	ctx := context.Background()
+
+	u, err := d.PresignGetObject(ctx, "bkt", "k1", 60*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(u)
+	token := parsed.Query().Get("token")
+	expires := parsed.Query().Get("expires")
+
+	err = d.VerifyPresignedToken("bkt", "k2", presignOpGet, token, expires)
+	if !errors.Is(err, ErrPresignKeyMismatch) {
+		t.Errorf("err = %v, want ErrPresignKeyMismatch", err)
+	}
+}
+
+func TestDriverPresignTokenTampered(t *testing.T) {
+	d := newTestDriverWithSecret(t)
+	ctx := context.Background()
+
+	u, err := d.PresignGetObject(ctx, "bkt", "k1", 60*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(u)
+	token := parsed.Query().Get("token")
+	expires := parsed.Query().Get("expires")
+
+	token += "x"
+	err = d.VerifyPresignedToken("bkt", "k1", presignOpGet, token, expires)
+	if !errors.Is(err, ErrPresignInvalidToken) {
+		t.Errorf("err = %v, want ErrPresignInvalidToken", err)
 	}
 }

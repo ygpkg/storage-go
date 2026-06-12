@@ -28,19 +28,22 @@ func init() {
 
 // Config Local driver 独立配置。
 type Config struct {
-	BaseDir string // 本地存储根目录
-	BaseURL string // 对外公共访问基础 URL
+	BaseDir    string // 本地存储根目录
+	BaseURL    string // 对外公共访问基础 URL
+	SignSecret string // 预签名 HMAC-SHA256 密钥，为空时预签名操作返回 ErrNotSupported
 }
 
-// Driver 本地磁盘存储驱动。
-type Driver struct {
-	baseDir string              // 本地根目录
-	keys    *keyLocks           // key 级别读写锁
-	mp      *multipartStore     // 分片上传状态存储
-	pb      storage.PathBuilder // 路径构造器
+// driver 本地磁盘存储驱动。
+type driver struct {
+	baseDir    string              // 本地根目录
+	baseURL    string              // 对外公共访问基础 URL
+	signSecret string              // 预签名 HMAC-SHA256 密钥
+	keys       *keyLocks           // key 级别读写锁
+	mp         *multipartStore     // 分片上传状态存储
+	pb         storage.PathBuilder // 路径构造器
 }
 
-var _ storage.Storage = (*Driver)(nil)
+var _ storage.Storage = (*driver)(nil)
 
 func NewPathBuilder(cfg storage.Config) storage.PathBuilder {
 	return &storage.LocalPathBuilder{
@@ -57,19 +60,21 @@ func New(cfg storage.Config) (storage.Storage, error) {
 		return nil, err
 	}
 	pb := NewPathBuilder(cfg)
-	return &Driver{
-		baseDir: cfg.BaseDir,
-		keys:    newKeyLocks(),
-		mp:      newMultipartStore(cfg.BaseDir),
-		pb:      pb,
+	return &driver{
+		baseDir:    cfg.BaseDir,
+		baseURL:    cfg.BaseURL,
+		signSecret: cfg.SignSecret,
+		keys:       newKeyLocks(),
+		mp:         newMultipartStore(cfg.BaseDir),
+		pb:         pb,
 	}, nil
 }
 
-func (d *Driver) dataPath(bucket, key string) string {
+func (d *driver) dataPath(bucket, key string) string {
 	return filepath.Join(d.baseDir, "data", bucket, filepath.FromSlash(key))
 }
 
-func (d *Driver) newPath(bucket, key string) storage.StoragePath {
+func (d *driver) newPath(bucket, key string) storage.StoragePath {
 	return d.pb.Build(bucket, key)
 }
 
@@ -82,7 +87,7 @@ func sortLocks(a, b string) (first, second string) {
 
 // ---------- Base ----------
 
-func (d *Driver) PutObject(ctx context.Context, bucket, key string, body io.Reader, opts ...storage.PutOption) (*storage.PutObjectResult, error) {
+func (d *driver) PutObject(ctx context.Context, bucket, key string, body io.Reader, opts ...storage.PutOption) (*storage.PutObjectResult, error) {
 	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -177,7 +182,7 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, body io.Read
 	}, nil
 }
 
-func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...storage.GetOption) (*storage.GetObjectResult, error) {
+func (d *driver) GetObject(ctx context.Context, bucket, key string, opts ...storage.GetOption) (*storage.GetObjectResult, error) {
 	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -222,7 +227,7 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...stor
 	}, nil
 }
 
-func (d *Driver) DeleteObject(ctx context.Context, bucket, key string) error {
+func (d *driver) DeleteObject(ctx context.Context, bucket, key string) error {
 	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return err
 	}
@@ -255,7 +260,7 @@ func (d *Driver) DeleteObject(ctx context.Context, bucket, key string) error {
 	return nil
 }
 
-func (d *Driver) DeleteObjects(ctx context.Context, bucket string, keys []string) error {
+func (d *driver) DeleteObjects(ctx context.Context, bucket string, keys []string) error {
 	var failures []storage.DeleteFailure
 	for _, k := range keys {
 		if err := d.DeleteObject(ctx, bucket, k); err != nil {
@@ -268,7 +273,7 @@ func (d *Driver) DeleteObjects(ctx context.Context, bucket string, keys []string
 	return nil
 }
 
-func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (*storage.ListObjectsOutput, error) {
+func (d *driver) ListObjects(ctx context.Context, bucket, prefix string, opts ...storage.ListOption) (*storage.ListObjectsOutput, error) {
 	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -408,7 +413,7 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 
 // ---------- Multipart ----------
 
-func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...storage.PutOption) (string, error) {
+func (d *driver) CreateMultipartUpload(ctx context.Context, bucket, key string, opts ...storage.PutOption) (string, error) {
 	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return "", err
 	}
@@ -426,7 +431,7 @@ func (d *Driver) CreateMultipartUpload(ctx context.Context, bucket, key string, 
 	return d.mp.Create(bucket, key, o.ContentType, o.Metadata)
 }
 
-func (d *Driver) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, body io.Reader) (*storage.CompletedPart, error) {
+func (d *driver) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, body io.Reader) (*storage.CompletedPart, error) {
 	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -446,7 +451,7 @@ func (d *Driver) UploadPart(ctx context.Context, bucket, key, uploadID string, p
 	return &storage.CompletedPart{PartNumber: partNumber, ETag: fmt.Sprintf("part-%d", partNumber)}, nil
 }
 
-func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []storage.CompletedPart) error {
+func (d *driver) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []storage.CompletedPart) error {
 	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return err
 	}
@@ -497,7 +502,7 @@ func (d *Driver) CompleteMultipartUpload(ctx context.Context, bucket, key, uploa
 	return err
 }
 
-func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+func (d *driver) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
 	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return err
 	}
@@ -515,7 +520,7 @@ func (d *Driver) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID
 
 // ---------- Ext ----------
 
-func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*storage.ObjectInfo, error) {
+func (d *driver) HeadObject(ctx context.Context, bucket, key string) (*storage.ObjectInfo, error) {
 	if err := pathcheck.ValidateBucket(bucket); err != nil {
 		return nil, err
 	}
@@ -544,7 +549,7 @@ func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*storage.O
 	}, nil
 }
 
-func (d *Driver) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string) error {
+func (d *driver) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string) error {
 	if err := pathcheck.ValidateBucket(srcBucket); err != nil {
 		return err
 	}
@@ -621,14 +626,6 @@ func (d *Driver) CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, d
 		Metadata:     meta.Metadata,
 	}
 	return writeMeta(d.baseDir, dstBucket, dstKey, dstMeta)
-}
-
-func (d *Driver) PresignGetObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...storage.GetOption) (string, error) {
-	return "", storage.ErrNotSupported
-}
-
-func (d *Driver) PresignPutObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...storage.PutOption) (string, error) {
-	return "", storage.ErrNotSupported
 }
 
 // ---------- keyLocks ----------
