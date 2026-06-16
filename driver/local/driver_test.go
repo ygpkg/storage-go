@@ -534,6 +534,29 @@ func TestDriverUsesBaseURL(t *testing.T) {
 	}
 }
 
+func TestDriverPublicURLNoBaseURLReadable(t *testing.T) {
+	d := newTestDriver(t)
+	ctx := context.Background()
+
+	data := []byte("read via public url")
+	res, err := d.PutObject(ctx, "bkt", "pubtest.txt", bytes.NewReader(data), storage.WithContentType("text/plain"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pub := res.Path.PublicURL()
+	t.Logf("PublicURL (no BaseURL): %s", pub)
+	f, err := os.Open(pub)
+	if err != nil {
+		t.Fatalf("unable to open file via PublicURL %s: %v", pub, err)
+	}
+	defer f.Close()
+	got, _ := io.ReadAll(f)
+	if !bytes.Equal(got, data) {
+		t.Errorf("file content = %q, want %q", got, data)
+	}
+}
+
 func TestDriverListStartAfterSkipsEarlierKeys(t *testing.T) {
 	d := newTestDriver(t)
 	ctx := context.Background()

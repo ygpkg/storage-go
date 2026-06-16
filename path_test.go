@@ -214,7 +214,19 @@ func TestLocalPathBuilder_BuildNoHTTPBase(t *testing.T) {
 		BaseURL: "",
 	}
 	p := pb.Build("avatars", "1.png")
-	if got, want := p.PublicURL(), "/data/storage/avatars/1.png"; got != want {
+	if got, want := p.PublicURL(), "/data/storage/data/avatars/1.png"; got != want {
 		t.Errorf("PublicURL = %q, want %q", got, want)
+	}
+}
+
+func TestLocalPathBuilder_AbsPathIncludesData(t *testing.T) {
+	pb := &LocalPathBuilder{
+		AbsDir:  "/var/storage",
+		BaseURL: "",
+	}
+	p := pb.Build("mybucket", "dir/file.txt")
+	pub := p.PublicURL()
+	if want := "/var/storage/data/mybucket/dir/file.txt"; pub != want {
+		t.Errorf("PublicURL = %q, want %q (must include /data/ for direct file access)", pub, want)
 	}
 }
