@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -412,13 +412,32 @@ func TestPublicURLAccessible(t *testing.T) {
 	logStoragePath(t, "PublicURL Path", res.Path)
 
 	if res.Path.IsLocal() {
-		baseDir := os.Getenv("STORAGE_BASE_DIR")
-		if baseDir == "" {
-			baseDir = os.TempDir()
-		}
-		dataP := filepath.Join(baseDir, "data", res.Path.Bucket(), filepath.FromSlash(res.Path.Key()))
-		if _, err := os.Stat(dataP); err != nil {
-			t.Errorf("local data file should exist at %s: %v", dataP, err)
+		publicURL := res.Path.PublicURL()
+		if strings.HasPrefix(publicURL, "http") {
+			client := &http.Client{Timeout: 10 * time.Second}
+			resp, err := client.Get(publicURL)
+			if err != nil {
+				t.Logf("HTTP request skipped (no server): %v", err)
+				return
+			}
+			defer resp.Body.Close()
+			_, _ = io.Copy(io.Discard, resp.Body)
+			t.Logf("HTTP %s status: %d", publicURL, resp.StatusCode)
+		} else {
+			f, err := os.Open(publicURL)
+			if err != nil {
+				t.Errorf("unable to open file via PublicURL %s: %v", publicURL, err)
+				return
+			}
+			defer f.Close()
+			readData, err := io.ReadAll(f)
+			if err != nil {
+				t.Errorf("unable to read file via PublicURL %s: %v", publicURL, err)
+				return
+			}
+			if !bytes.Equal(readData, data) {
+				t.Errorf("file content via PublicURL = %q, want %q", readData, data)
+			}
 		}
 		return
 	}

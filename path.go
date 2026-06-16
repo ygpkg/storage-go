@@ -119,7 +119,7 @@ func (p *filePath) Bucket() string { return p.bucket }
 func (p *filePath) Key() string    { return p.key }
 
 func (p *filePath) absPath() string {
-	return fmt.Sprintf("%s/%s/%s", strings.TrimRight(p.absDir, "/"), p.bucket, p.key)
+	return fmt.Sprintf("%s/data/%s/%s", strings.TrimRight(p.absDir, "/"), p.bucket, p.key)
 }
 
 // PathBuilder 为 driver 提供构造 StoragePath 的能力。
