@@ -74,6 +74,10 @@ func (d *driver) dataPath(bucket, key string) string {
 	return filepath.Join(d.baseDir, "data", bucket, filepath.FromSlash(key))
 }
 
+func (d *driver) PathBuilder() storage.PathBuilder {
+	return d.pb
+}
+
 func (d *driver) newPath(bucket, key string) storage.StoragePath {
 	return d.pb.Build(bucket, key)
 }
