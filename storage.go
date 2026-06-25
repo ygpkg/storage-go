@@ -36,4 +36,5 @@ type Ext interface {
 	CopyObject(ctx context.Context, srcBucket, srcKey, dstBucket, dstKey string) error
 	PresignGetObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...GetOption) (string, error)
 	PresignPutObject(ctx context.Context, bucket, key string, ttl time.Duration, opts ...PutOption) (string, error)
+	PathBuilder() PathBuilder
 }

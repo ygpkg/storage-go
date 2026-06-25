@@ -230,3 +230,283 @@ func TestLocalPathBuilder_AbsPathIncludesData(t *testing.T) {
 		t.Errorf("PublicURL = %q, want %q (must include /data/ for direct file access)", pub, want)
 	}
 }
+
+func TestS3PathBuilder_ParsePublicURL_PathStyle(t *testing.T) {
+	pb := &S3PathBuilder{
+		BaseURL:  "https://cdn.example.com",
+		Endpoint: "https://s3.example.com",
+		URLStyle: URLStylePath,
+	}
+	p, err := pb.ParsePublicURL("https://cdn.example.com/avatars/user/1.png")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := p.Bucket(), "avatars"; got != want {
+		t.Errorf("Bucket = %q, want %q", got, want)
+	}
+	if got, want := p.Key(), "user/1.png"; got != want {
+		t.Errorf("Key = %q, want %q", got, want)
+	}
+	if got, want := p.URI(), "s3://avatars/user/1.png"; got != want {
+		t.Errorf("URI = %q, want %q", got, want)
+	}
+}
+
+func TestS3PathBuilder_ParsePublicURL_PathStyleFallbackEndpoint(t *testing.T) {
+	pb := &S3PathBuilder{
+		BaseURL:  "",
+		Endpoint: "https://s3.example.com",
+		URLStyle: URLStylePath,
+	}
+	p, err := pb.ParsePublicURL("https://s3.example.com/b/k")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := p.Bucket(), "b"; got != want {
+		t.Errorf("Bucket = %q, want %q", got, want)
+	}
+	if got, want := p.Key(), "k"; got != want {
+		t.Errorf("Key = %q, want %q", got, want)
+	}
+}
+
+func TestS3PathBuilder_ParsePublicURL_VirtualHostedBaseURL(t *testing.T) {
+	pb := &S3PathBuilder{
+		BaseURL:  "https://cdn.example.com",
+		Endpoint: "https://cos.ap-guangzhou.myqcloud.com",
+		Region:   "ap-guangzhou",
+		URLStyle: URLStyleVirtualHosted,
+	}
+	// 不传 WithBucket，兜底走 hostname
+	p, err := pb.ParsePublicURL("https://cdn.example.com/user/1.png")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := p.Bucket(), "cdn.example.com"; got != want {
+		t.Errorf("Bucket without WithBucket = %q, want %q", got, want)
+	}
+	if got, want := p.Key(), "user/1.png"; got != want {
+		t.Errorf("Key = %q, want %q", got, want)
+	}
+
+	// 传 WithBucket 指定真实 bucket
+	p2, err := pb.ParsePublicURL("https://cdn.example.com/user/1.png",
+		WithBucket("mybucket-1250000000"))
+	if err != nil {
+		t.Fatalf("unexpected error with WithBucket: %v", err)
+	}
+	if got, want := p2.Bucket(), "mybucket-1250000000"; got != want {
+		t.Errorf("Bucket with WithBucket = %q, want %q", got, want)
+	}
+}
+
+func TestS3PathBuilder_ParsePublicURL_VirtualHostedBaseURLHasBucket(t *testing.T) {
+	pb := &S3PathBuilder{
+		BaseURL:  "https://mybucket-1250000000.cos.ap-guangzhou.myqcloud.com",
+		Endpoint: "https://cos.ap-guangzhou.myqcloud.com",
+		Region:   "ap-guangzhou",
+		URLStyle: URLStyleVirtualHosted,
+	}
+	p, err := pb.ParsePublicURL("https://mybucket-1250000000.cos.ap-guangzhou.myqcloud.com/user/1.png")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := p.Bucket(), "mybucket-1250000000"; got != want {
+		t.Errorf("Bucket = %q, want %q", got, want)
+	}
+	if got, want := p.Key(), "user/1.png"; got != want {
+		t.Errorf("Key = %q, want %q", got, want)
+	}
+	if got, want := p.URI(), "s3://mybucket-1250000000/user/1.png"; got != want {
+		t.Errorf("URI = %q, want %q", got, want)
+	}
+}
+
+func TestS3PathBuilder_ParsePublicURL_VirtualHostedRegionFallback(t *testing.T) {
+	pb := &S3PathBuilder{
+		BaseURL:  "",
+		Endpoint: "https://cos.ap-guangzhou.myqcloud.com",
+		Region:   "ap-guangzhou",
+		URLStyle: URLStyleVirtualHosted,
+	}
+	p, err := pb.ParsePublicURL("https://mybucket-1250000000.cos.ap-guangzhou.myqcloud.com/user/1.png")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := p.Bucket(), "mybucket-1250000000"; got != want {
+		t.Errorf("Bucket = %q, want %q", got, want)
+	}
+	if got, want := p.Key(), "user/1.png"; got != want {
+		t.Errorf("Key = %q, want %q", got, want)
+	}
+}
+
+func TestS3PathBuilder_ParsePublicURL_NestedKey(t *testing.T) {
+	pb := &S3PathBuilder{
+		BaseURL:  "https://cdn.example.com",
+		Endpoint: "https://s3.example.com",
+		URLStyle: URLStylePath,
+	}
+	p, err := pb.ParsePublicURL("https://cdn.example.com/b/a/b/c/d.txt")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := p.Key(), "a/b/c/d.txt"; got != want {
+		t.Errorf("Key = %q, want %q", got, want)
+	}
+}
+
+func TestS3PathBuilder_ParsePublicURL_NoKey(t *testing.T) {
+	pb := &S3PathBuilder{
+		BaseURL:  "https://cdn.example.com",
+		Endpoint: "https://s3.example.com",
+		URLStyle: URLStylePath,
+	}
+	p, err := pb.ParsePublicURL("https://cdn.example.com/mybucket")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := p.Bucket(), "mybucket"; got != want {
+		t.Errorf("Bucket = %q, want %q", got, want)
+	}
+	if p.Key() != "" {
+		t.Errorf("Key = %q, want empty", p.Key())
+	}
+}
+
+func TestS3PathBuilder_ParsePublicURL_UnrecognizedPrefix(t *testing.T) {
+	pb := &S3PathBuilder{
+		BaseURL:  "https://cdn.example.com",
+		Endpoint: "https://s3.example.com",
+		URLStyle: URLStylePath,
+	}
+	_, err := pb.ParsePublicURL("https://other.example.com/bucket/key")
+	if err == nil {
+		t.Error("expected error for unrecognized URL prefix")
+	}
+}
+
+func TestS3PathBuilder_ParsePublicURL_InvalidURL(t *testing.T) {
+	pb := &S3PathBuilder{
+		BaseURL:  "https://cdn.example.com",
+		Endpoint: "https://s3.example.com",
+		URLStyle: URLStylePath,
+	}
+	_, err := pb.ParsePublicURL("://invalid")
+	if err == nil {
+		t.Error("expected error for invalid URL")
+	}
+}
+
+func TestLocalPathBuilder_ParsePublicURL(t *testing.T) {
+	pb := &LocalPathBuilder{
+		AbsDir:  "/data/storage",
+		BaseURL: "http://localhost:8080",
+	}
+	p, err := pb.ParsePublicURL("http://localhost:8080/avatars/user/1.png")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := p.Bucket(), "avatars"; got != want {
+		t.Errorf("Bucket = %q, want %q", got, want)
+	}
+	if got, want := p.Key(), "user/1.png"; got != want {
+		t.Errorf("Key = %q, want %q", got, want)
+	}
+	if got, want := p.URI(), "file://avatars/user/1.png"; got != want {
+		t.Errorf("URI = %q, want %q", got, want)
+	}
+}
+
+func TestLocalPathBuilder_ParsePublicURL_NoBaseURL(t *testing.T) {
+	pb := &LocalPathBuilder{
+		AbsDir:  "/data/storage",
+		BaseURL: "",
+	}
+	_, err := pb.ParsePublicURL("http://localhost:8080/avatars/user/1.png")
+	if err == nil {
+		t.Error("expected error when BaseURL is empty")
+	}
+}
+
+func TestLocalPathBuilder_ParsePublicURL_UnrecognizedPrefix(t *testing.T) {
+	pb := &LocalPathBuilder{
+		AbsDir:  "/data/storage",
+		BaseURL: "http://localhost:8080",
+	}
+	_, err := pb.ParsePublicURL("http://other:9090/bucket/key")
+	if err == nil {
+		t.Error("expected error for unrecognized URL prefix")
+	}
+}
+
+func TestS3PathBuilder_ParsePublicURL_COSCDN_WithBucket(t *testing.T) {
+	pb := &S3PathBuilder{
+		BaseURL:  "https://cdn.mydomain.com",
+		Endpoint: "https://cos.ap-guangzhou.myqcloud.com",
+		Region:   "ap-guangzhou",
+		URLStyle: URLStyleVirtualHosted,
+	}
+	p, err := pb.ParsePublicURL("https://cdn.mydomain.com/user/1.png",
+		WithBucket("mybucket-1250000000"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := p.Bucket(), "mybucket-1250000000"; got != want {
+		t.Errorf("Bucket = %q, want %q", got, want)
+	}
+	if got, want := p.Key(), "user/1.png"; got != want {
+		t.Errorf("Key = %q, want %q", got, want)
+	}
+	if got, want := p.URI(), "s3://mybucket-1250000000/user/1.png"; got != want {
+		t.Errorf("URI = %q, want %q", got, want)
+	}
+}
+
+func TestS3PathBuilder_ParsePublicURL_COSDefaultDomain_WithBucketRedundant(t *testing.T) {
+	pb := &S3PathBuilder{
+		BaseURL:  "https://mybucket-1250000000.cos.ap-guangzhou.myqcloud.com",
+		Endpoint: "https://cos.ap-guangzhou.myqcloud.com",
+		Region:   "ap-guangzhou",
+		URLStyle: URLStyleVirtualHosted,
+	}
+	p, err := pb.ParsePublicURL("https://mybucket-1250000000.cos.ap-guangzhou.myqcloud.com/user/1.png",
+		WithBucket("other-bucket"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := p.Bucket(), "mybucket-1250000000"; got != want {
+		t.Errorf("Bucket = %q, want %q (domain should take priority over WithBucket)", got, want)
+	}
+}
+
+func TestS3PathBuilder_ParsePublicURL_PathStyle_WithBucketIgnored(t *testing.T) {
+	pb := &S3PathBuilder{
+		BaseURL:  "https://cdn.example.com",
+		Endpoint: "https://s3.example.com",
+		URLStyle: URLStylePath,
+	}
+	p, err := pb.ParsePublicURL("https://cdn.example.com/avatars/user/1.png",
+		WithBucket("ignored"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := p.Bucket(), "avatars"; got != want {
+		t.Errorf("Bucket = %q, want %q (path-style ignores WithBucket)", got, want)
+	}
+}
+
+func TestLocalPathBuilder_ParsePublicURL_WithBucketIgnored(t *testing.T) {
+	pb := &LocalPathBuilder{
+		AbsDir:  "/data/storage",
+		BaseURL: "http://localhost:8080",
+	}
+	p, err := pb.ParsePublicURL("http://localhost:8080/avatars/user/1.png",
+		WithBucket("ignored"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := p.Bucket(), "avatars"; got != want {
+		t.Errorf("Bucket = %q, want %q (local ignores WithBucket)", got, want)
+	}
+}

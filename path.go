@@ -122,11 +122,27 @@ func (p *filePath) absPath() string {
 	return fmt.Sprintf("%s/data/%s/%s", strings.TrimRight(p.absDir, "/"), p.bucket, p.key)
 }
 
+// ParseURLOption 为 ParsePublicURL 提供可选解析参数。
+type ParseURLOption func(*ParseURLOptions)
+
+// ParseURLOptions 解析 URL 时的可选参数。
+type ParseURLOptions struct {
+	Bucket string // 显式指定 bucket，用于 CDN 域名场景下 URL 不包含 bucket 的情况
+}
+
+// WithBucket 显式指定解析 URL 时的 bucket。
+func WithBucket(bucket string) ParseURLOption {
+	return func(o *ParseURLOptions) {
+		o.Bucket = bucket
+	}
+}
+
 // PathBuilder 为 driver 提供构造 StoragePath 的能力。
 // driver 通过注入的 PathBuilder.Build(bucket, key) 获取路径实例，
 // 不直接构造 s3Path / filePath。
 type PathBuilder interface {
 	Build(bucket, key string) StoragePath
+	ParsePublicURL(rawURL string, opts ...ParseURLOption) (StoragePath, error)
 }
 
 // S3PathBuilder 构造 S3 兼容后端的 StoragePath。
@@ -148,6 +164,126 @@ func (b *S3PathBuilder) Build(bucket, key string) StoragePath {
 	}
 }
 
+func (b *S3PathBuilder) ParsePublicURL(rawURL string, opts ...ParseURLOption) (StoragePath, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid URL: %v", ErrInvalidPath, err)
+	}
+	o := &ParseURLOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	base := strings.TrimRight(b.BaseURL, "/")
+	if base != "" && strings.HasPrefix(rawURL, base) {
+		return b.parseWithPrefix(base, u, o)
+	}
+	if b.Endpoint != "" {
+		ep := strings.TrimRight(b.Endpoint, "/")
+		if strings.HasPrefix(rawURL, ep) {
+			return b.parseWithPrefix(ep, u, o)
+		}
+	}
+
+	if b.URLStyle == URLStyleVirtualHosted && b.Endpoint != "" {
+		ep, _ := url.Parse(b.Endpoint)
+		if ep != nil {
+			hostURL, hostEP := u.Hostname(), ep.Hostname()
+			if hostURL != hostEP && strings.HasSuffix(hostURL, "."+hostEP) {
+				bucket := strings.TrimSuffix(hostURL, "."+hostEP)
+				key := strings.TrimPrefix(u.Path, "/")
+				return &s3Path{
+					bucket:   bucket,
+					key:      key,
+					baseURL:  b.BaseURL,
+					endpoint: b.Endpoint,
+					region:   b.Region,
+					urlStyle: b.URLStyle,
+				}, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("%w: URL prefix not recognized for this driver", ErrInvalidPath)
+}
+
+func (b *S3PathBuilder) parseWithPrefix(prefix string, u *url.URL, o *ParseURLOptions) (StoragePath, error) {
+	path := strings.TrimPrefix(u.String(), prefix)
+	path = strings.TrimLeft(path, "/")
+
+	if b.URLStyle == URLStyleVirtualHosted {
+		bucket := ""
+		if b.BaseURL != "" {
+			if bu := b.bucketFromBaseURL(strings.TrimRight(b.BaseURL, "/")); bu != "" {
+				bucket = bu
+			}
+		}
+		if bucket == "" && b.Endpoint != "" {
+			ep, _ := url.Parse(b.Endpoint)
+			if ep != nil {
+				hostURL, hostEP := u.Hostname(), ep.Hostname()
+				if hostURL != hostEP && strings.HasSuffix(hostURL, "."+hostEP) {
+					bucket = strings.TrimSuffix(hostURL, "."+hostEP)
+				}
+			}
+		}
+		if bucket == "" {
+			bucket = o.Bucket
+		}
+		if bucket == "" {
+			bucket = u.Hostname()
+		}
+		return &s3Path{
+			bucket:   bucket,
+			key:      path,
+			baseURL:  b.BaseURL,
+			endpoint: b.Endpoint,
+			region:   b.Region,
+			urlStyle: b.URLStyle,
+		}, nil
+	}
+
+	slashIdx := strings.Index(path, "/")
+	if slashIdx < 0 {
+		return &s3Path{
+			bucket:   path,
+			key:      "",
+			baseURL:  b.BaseURL,
+			endpoint: b.Endpoint,
+			region:   b.Region,
+			urlStyle: b.URLStyle,
+		}, nil
+	}
+	return &s3Path{
+		bucket:   path[:slashIdx],
+		key:      path[slashIdx+1:],
+		baseURL:  b.BaseURL,
+		endpoint: b.Endpoint,
+		region:   b.Region,
+		urlStyle: b.URLStyle,
+	}, nil
+}
+
+func (b *S3PathBuilder) bucketFromBaseURL(baseURL string) string {
+	if baseURL == "" {
+		return ""
+	}
+	bu, err := url.Parse(baseURL)
+	if err != nil {
+		return ""
+	}
+	host := bu.Hostname()
+	epHost := ""
+	if b.Endpoint != "" {
+		if ep, err := url.Parse(b.Endpoint); err == nil {
+			epHost = ep.Hostname()
+		}
+	}
+	if epHost != "" && host != epHost && strings.HasSuffix(host, "."+epHost) {
+		return strings.TrimSuffix(host, "."+epHost)
+	}
+	return ""
+}
+
 // LocalPathBuilder 构造本地文件后端的 StoragePath。
 type LocalPathBuilder struct {
 	AbsDir  string // 本地数据文件根目录
@@ -161,4 +297,31 @@ func (b *LocalPathBuilder) Build(bucket, key string) StoragePath {
 		key:      key,
 		httpBase: b.BaseURL,
 	}
+}
+
+func (b *LocalPathBuilder) ParsePublicURL(rawURL string, opts ...ParseURLOption) (StoragePath, error) {
+	base := strings.TrimRight(b.BaseURL, "/")
+	if base == "" {
+		return nil, fmt.Errorf("%w: BaseURL is required for local driver URL parsing", ErrInvalidPath)
+	}
+	if !strings.HasPrefix(rawURL, base+"/") && rawURL != base {
+		return nil, fmt.Errorf("%w: URL prefix not recognized for this driver", ErrInvalidPath)
+	}
+	path := strings.TrimPrefix(rawURL, base)
+	path = strings.TrimLeft(path, "/")
+	slashIdx := strings.Index(path, "/")
+	if slashIdx < 0 {
+		return &filePath{
+			absDir:   b.AbsDir,
+			bucket:   path,
+			key:      "",
+			httpBase: b.BaseURL,
+		}, nil
+	}
+	return &filePath{
+		absDir:   b.AbsDir,
+		bucket:   path[:slashIdx],
+		key:      path[slashIdx+1:],
+		httpBase: b.BaseURL,
+	}, nil
 }

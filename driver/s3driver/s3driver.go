@@ -92,9 +92,12 @@ func New(cfg storage.Config, pb storage.PathBuilder, opts ...Option) (storage.St
 	}, nil
 }
 
-// NewPath 构造带有当前 driver 配置的 StoragePath。
-// 实际构造委托给注入的 PathBuilder。
-func (d *Driver) NewPath(bucket, key string) storage.StoragePath {
+// PathBuilder 返回当前 driver 使用的 PathBuilder，调用方可用于 Build 和 ParsePublicURL。
+func (d *Driver) PathBuilder() storage.PathBuilder {
+	return d.pb
+}
+
+func (d *Driver) newPath(bucket, key string) storage.StoragePath {
 	return d.pb.Build(bucket, key)
 }
 
@@ -149,7 +152,7 @@ func (d *Driver) PutObject(ctx context.Context, bucket, key string, body io.Read
 	etag := trimETag(aws.ToString(output.ETag))
 	return &storage.PutObjectResult{
 		ObjectInfo: storage.ObjectInfo{
-			Path:         d.NewPath(bucket, key),
+			Path:         d.newPath(bucket, key),
 			Size:         aws.ToInt64(output.Size),
 			ETag:         etag,
 			ContentType:  o.ContentType,
@@ -185,7 +188,7 @@ func (d *Driver) GetObject(ctx context.Context, bucket, key string, opts ...stor
 	return &storage.GetObjectResult{
 		Body: output.Body,
 		ObjectInfo: storage.ObjectInfo{
-			Path:         d.NewPath(bucket, key),
+			Path:         d.newPath(bucket, key),
 			Size:         aws.ToInt64(output.ContentLength),
 			ETag:         trimETag(aws.ToString(output.ETag)),
 			ContentType:  aws.ToString(output.ContentType),
@@ -274,7 +277,7 @@ func (d *Driver) ListObjects(ctx context.Context, bucket, prefix string, opts ..
 			continue
 		}
 		contents = append(contents, storage.ObjectInfo{
-			Path:         d.NewPath(bucket, aws.ToString(obj.Key)),
+			Path:         d.newPath(bucket, aws.ToString(obj.Key)),
 			Size:         aws.ToInt64(obj.Size),
 			ETag:         aws.ToString(obj.ETag),
 			LastModified: aws.ToTime(obj.LastModified),
@@ -399,7 +402,7 @@ func (d *Driver) HeadObject(ctx context.Context, bucket, key string) (*storage.O
 		return nil, wrapS3Err(err)
 	}
 	info := &storage.ObjectInfo{
-		Path:         d.NewPath(bucket, key),
+		Path:         d.newPath(bucket, key),
 		Size:         aws.ToInt64(output.ContentLength),
 		ETag:         trimETag(aws.ToString(output.ETag)),
 		ContentType:  aws.ToString(output.ContentType),
