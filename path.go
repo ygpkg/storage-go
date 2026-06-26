@@ -6,16 +6,34 @@ import (
 	"strings"
 )
 
-// ParseURI 将 s3://bucket/key 或 file://bucket/key 格式的 URI 解析为 scheme、bucket、key。
+// ParseURI 将 s3://bucket/key 或 file:///bucket/key 格式的 URI 解析为 scheme、bucket、key。
 func ParseURI(uri string) (scheme, bucket, key string, err error) {
 	u, err := url.Parse(uri)
-	if err != nil || u.Scheme == "" || u.Host == "" {
+	if err != nil || u.Scheme == "" {
 		return "", "", "", ErrInvalidPath
 	}
 	switch u.Scheme {
-	case SchemeS3, SchemeFile:
+	case SchemeS3:
+	case SchemeFile:
 	default:
 		return "", "", "", ErrInvalidPath
+	}
+	if u.Scheme == SchemeS3 && u.Host == "" {
+		return "", "", "", ErrInvalidPath
+	}
+	if u.Scheme == SchemeFile {
+		bucket = u.Host
+		if bucket == "" {
+			path := strings.TrimPrefix(u.Path, "/")
+			idx := strings.Index(path, "/")
+			if idx >= 0 {
+				bucket = path[:idx]
+				key = path[idx+1:]
+			} else {
+				bucket = path
+			}
+			return u.Scheme, bucket, key, nil
+		}
 	}
 	key = strings.TrimPrefix(u.Path, "/")
 	return u.Scheme, u.Host, key, nil
@@ -95,11 +113,11 @@ type filePath struct {
 	absDir   string // 本地数据文件根目录
 	bucket   string // bucket 名称，用于拼接 URL
 	key      string // 对象 key，用于拼接 URL
-	httpBase string // 对外 HTTP 基础 URL，为空时 PublicURL() 返回 file:// 形式的绝对路径
+	httpBase string // 对外 HTTP 基础 URL，为空时 PublicURL() 返回 file:/// 形式的绝对路径
 }
 
 func (p *filePath) URI() string {
-	return SchemeFile + "://" + p.bucket + "/" + p.key
+	return SchemeFile + ":///" + p.bucket + "/" + p.key
 }
 
 func (p *filePath) Path() string {
@@ -108,7 +126,7 @@ func (p *filePath) Path() string {
 
 func (p *filePath) PublicURL() string {
 	if p.httpBase == "" {
-		return p.absPath()
+		return SchemeFile + ":///" + strings.TrimPrefix(p.absPath(), "/")
 	}
 	return strings.TrimRight(p.httpBase, "/") + "/" + p.bucket + "/" + p.key
 }
@@ -287,7 +305,7 @@ func (b *S3PathBuilder) bucketFromBaseURL(baseURL string) string {
 // LocalPathBuilder 构造本地文件后端的 StoragePath。
 type LocalPathBuilder struct {
 	AbsDir  string // 本地数据文件根目录
-	BaseURL string // 对外 HTTP 基础 URL，为空时 PublicURL() 返回 file:// 形式绝对路径
+	BaseURL string // 对外 HTTP 基础 URL，为空时 PublicURL() 返回 file:/// 形式绝对路径
 }
 
 func (b *LocalPathBuilder) Build(bucket, key string) StoragePath {

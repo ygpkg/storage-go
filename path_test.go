@@ -109,7 +109,7 @@ func TestLocalPathBuilder_Build(t *testing.T) {
 	if p.IsLocal() != true {
 		t.Error("IsLocal should be true")
 	}
-	if got, want := p.URI(), "file://avatars/user/1.png"; got != want {
+	if got, want := p.URI(), "file:///avatars/user/1.png"; got != want {
 		t.Errorf("URI = %q, want %q", got, want)
 	}
 	if got, want := p.PublicURL(), "http://localhost:8080/avatars/user/1.png"; got != want {
@@ -134,7 +134,7 @@ func TestParseURI_S3(t *testing.T) {
 }
 
 func TestParseURI_File(t *testing.T) {
-	scheme, bucket, key, err := ParseURI("file://avatars/data.json")
+	scheme, bucket, key, err := ParseURI("file:///avatars/data.json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestLocalPathBuilder_BuildNoHTTPBase(t *testing.T) {
 		BaseURL: "",
 	}
 	p := pb.Build("avatars", "1.png")
-	if got, want := p.PublicURL(), "/data/storage/data/avatars/1.png"; got != want {
+	if got, want := p.PublicURL(), "file:///data/storage/data/avatars/1.png"; got != want {
 		t.Errorf("PublicURL = %q, want %q", got, want)
 	}
 }
@@ -226,7 +226,7 @@ func TestLocalPathBuilder_AbsPathIncludesData(t *testing.T) {
 	}
 	p := pb.Build("mybucket", "dir/file.txt")
 	pub := p.PublicURL()
-	if want := "/var/storage/data/mybucket/dir/file.txt"; pub != want {
+	if want := "file:///var/storage/data/mybucket/dir/file.txt"; pub != want {
 		t.Errorf("PublicURL = %q, want %q (must include /data/ for direct file access)", pub, want)
 	}
 }
@@ -413,7 +413,7 @@ func TestLocalPathBuilder_ParsePublicURL(t *testing.T) {
 	if got, want := p.Key(), "user/1.png"; got != want {
 		t.Errorf("Key = %q, want %q", got, want)
 	}
-	if got, want := p.URI(), "file://avatars/user/1.png"; got != want {
+	if got, want := p.URI(), "file:///avatars/user/1.png"; got != want {
 		t.Errorf("URI = %q, want %q", got, want)
 	}
 }

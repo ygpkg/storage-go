@@ -546,7 +546,8 @@ func TestDriverPublicURLNoBaseURLReadable(t *testing.T) {
 
 	pub := res.Path.PublicURL()
 	t.Logf("PublicURL (no BaseURL): %s", pub)
-	f, err := os.Open(pub)
+	filePath := strings.TrimPrefix(pub, "file://")
+	f, err := os.Open(filePath)
 	if err != nil {
 		t.Fatalf("unable to open file via PublicURL %s: %v", pub, err)
 	}
