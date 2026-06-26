@@ -510,3 +510,158 @@ func TestLocalPathBuilder_ParsePublicURL_WithBucketIgnored(t *testing.T) {
 		t.Errorf("Bucket = %q, want %q (local ignores WithBucket)", got, want)
 	}
 }
+
+func TestURIAndParseURI_RoundTrip_S3(t *testing.T) {
+	tests := []struct {
+		bucket string
+		key    string
+	}{
+		{"mybucket", "user/1.png"},
+		{"b", "a/b/c/d.txt"},
+		{"mybucket", ""},
+		{"mybucket", "文件 名称.txt"},
+	}
+	pb := &S3PathBuilder{}
+	for _, tt := range tests {
+		p := pb.Build(tt.bucket, tt.key)
+		uri := p.URI()
+		scheme, bucket, key, err := ParseURI(uri)
+		if err != nil {
+			t.Errorf("ParseURI(%q) error: %v", uri, err)
+			continue
+		}
+		if scheme != SchemeS3 {
+			t.Errorf("scheme = %q, want %q", scheme, SchemeS3)
+		}
+		if bucket != tt.bucket {
+			t.Errorf("bucket = %q, want %q", bucket, tt.bucket)
+		}
+		if key != tt.key {
+			t.Errorf("key = %q, want %q", key, tt.key)
+		}
+	}
+}
+
+func TestURIAndParseURI_RoundTrip_File(t *testing.T) {
+	tests := []struct {
+		bucket string
+		key    string
+	}{
+		{"avatars", "user/1.png"},
+		{"data", "a/b/c/d.txt"},
+		{"root", ""},
+		{"root", "文件 名称.txt"},
+	}
+	pb := &LocalPathBuilder{AbsDir: "/data"}
+	for _, tt := range tests {
+		p := pb.Build(tt.bucket, tt.key)
+		uri := p.URI()
+		scheme, bucket, key, err := ParseURI(uri)
+		if err != nil {
+			t.Errorf("ParseURI(%q) error: %v", uri, err)
+			continue
+		}
+		if scheme != SchemeFile {
+			t.Errorf("scheme = %q, want %q", scheme, SchemeFile)
+		}
+		if bucket != tt.bucket {
+			t.Errorf("bucket = %q, want %q", bucket, tt.bucket)
+		}
+		if key != tt.key {
+			t.Errorf("key = %q, want %q", key, tt.key)
+		}
+	}
+}
+
+func TestBuildURI_S3(t *testing.T) {
+	tests := []struct {
+		bucket string
+		key    string
+		want   string
+	}{
+		{"mybucket", "user/1.png", "s3://mybucket/user/1.png"},
+		{"b", "a/b/c/d.txt", "s3://b/a/b/c/d.txt"},
+		{"mybucket", "", "s3://mybucket"},
+	}
+	for _, tt := range tests {
+		got, err := BuildURI(SchemeS3, tt.bucket, tt.key)
+		if err != nil {
+			t.Errorf("BuildURI(s3, %q, %q) unexpected error: %v", tt.bucket, tt.key, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("BuildURI(s3, %q, %q) = %q, want %q", tt.bucket, tt.key, got, tt.want)
+		}
+	}
+}
+
+func TestBuildURI_File(t *testing.T) {
+	tests := []struct {
+		bucket string
+		key    string
+		want   string
+	}{
+		{"avatars", "user/1.png", "file:///avatars/user/1.png"},
+		{"data", "a/b/c/d.txt", "file:///data/a/b/c/d.txt"},
+		{"root", "", "file:///root"},
+	}
+	for _, tt := range tests {
+		got, err := BuildURI(SchemeFile, tt.bucket, tt.key)
+		if err != nil {
+			t.Errorf("BuildURI(file, %q, %q) unexpected error: %v", tt.bucket, tt.key, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("BuildURI(file, %q, %q) = %q, want %q", tt.bucket, tt.key, got, tt.want)
+		}
+	}
+}
+
+func TestBuildURI_Invalid(t *testing.T) {
+	tests := []struct {
+		scheme string
+		bucket string
+		key    string
+	}{
+		{"ftp", "b", "k"},
+		{"", "b", "k"},
+		{SchemeS3, "", "k"},
+	}
+	for _, tt := range tests {
+		_, err := BuildURI(tt.scheme, tt.bucket, tt.key)
+		if err == nil {
+			t.Errorf("BuildURI(%q, %q, %q) should return error", tt.scheme, tt.bucket, tt.key)
+		}
+	}
+}
+
+func TestBuildURIAndParseURI_RoundTrip(t *testing.T) {
+	cases := []struct {
+		scheme string
+		bucket string
+		key    string
+	}{
+		{SchemeS3, "mybucket", "user/1.png"},
+		{SchemeS3, "b", "a/b/c/d.txt"},
+		{SchemeS3, "mybucket", ""},
+		{SchemeFile, "avatars", "user/1.png"},
+		{SchemeFile, "root", ""},
+		{SchemeFile, "data", "a b/中文.txt"},
+	}
+	for _, c := range cases {
+		uri, err := BuildURI(c.scheme, c.bucket, c.key)
+		if err != nil {
+			t.Errorf("BuildURI(%q, %q, %q) unexpected error: %v", c.scheme, c.bucket, c.key, err)
+			continue
+		}
+		scheme, bucket, key, err := ParseURI(uri)
+		if err != nil {
+			t.Errorf("ParseURI(%q) unexpected error: %v", uri, err)
+			continue
+		}
+		if scheme != c.scheme || bucket != c.bucket || key != c.key {
+			t.Errorf("round-trip mismatch: BuildURI(%q,%q,%q)=%q, ParseURI=%q/%q/%q",
+				c.scheme, c.bucket, c.key, uri, scheme, bucket, key)
+		}
+	}
+}

@@ -37,6 +37,36 @@ func parseFileURI(u *url.URL) (scheme, bucket, key string, err error) {
 	return SchemeFile, path, "", nil
 }
 
+// BuildURI 将 scheme、bucket、key 组装为 URI，是 ParseURI 的逆操作。
+func BuildURI(scheme, bucket, key string) (string, error) {
+	switch scheme {
+	case SchemeS3:
+		if bucket == "" {
+			return "", ErrInvalidPath
+		}
+		path := "/" + key
+		if key == "" {
+			path = ""
+		}
+		return (&url.URL{
+			Scheme: SchemeS3,
+			Host:   bucket,
+			Path:   path,
+		}).String(), nil
+	case SchemeFile:
+		path := "/" + bucket
+		if key != "" {
+			path += "/" + key
+		}
+		return (&url.URL{
+			Scheme: SchemeFile,
+			Path:   path,
+		}).String(), nil
+	default:
+		return "", ErrInvalidPath
+	}
+}
+
 // StoragePath 是存储路径的统一载体，仅出现在返回值中。
 // 由 driver 内部从 bucket、key 组装后返回，不作为接口入参。
 type StoragePath interface {
@@ -73,7 +103,8 @@ type s3Path struct {
 }
 
 func (p *s3Path) URI() string {
-	return SchemeS3 + "://" + p.bucket + "/" + p.key
+	uri, _ := BuildURI(SchemeS3, p.bucket, p.key)
+	return uri
 }
 
 func (p *s3Path) Path() string {
@@ -94,11 +125,10 @@ func (p *s3Path) PublicURL() string {
 	if base == "" {
 		return ""
 	}
-	base = strings.TrimRight(base, "/")
 	if p.urlStyle == URLStyleVirtualHosted {
-		return base + "/" + p.key
+		return urlJoinPath(base, p.key)
 	}
-	return base + "/" + p.bucket + "/" + p.key
+	return urlJoinPath(base, p.bucket, p.key)
 }
 
 func (p *s3Path) Scheme() string { return SchemeS3 }
@@ -115,7 +145,8 @@ type filePath struct {
 }
 
 func (p *filePath) URI() string {
-	return SchemeFile + ":///" + p.bucket + "/" + p.key
+	uri, _ := BuildURI(SchemeFile, p.bucket, p.key)
+	return uri
 }
 
 func (p *filePath) Path() string {
@@ -124,9 +155,12 @@ func (p *filePath) Path() string {
 
 func (p *filePath) PublicURL() string {
 	if p.httpBase == "" {
-		return SchemeFile + ":///" + strings.TrimPrefix(p.absPath(), "/")
+		return (&url.URL{
+			Scheme: SchemeFile,
+			Path:   p.absPath(),
+		}).String()
 	}
-	return strings.TrimRight(p.httpBase, "/") + "/" + p.bucket + "/" + p.key
+	return urlJoinPath(p.httpBase, p.bucket, p.key)
 }
 
 func (p *filePath) Scheme() string { return SchemeFile }
@@ -136,6 +170,18 @@ func (p *filePath) Key() string    { return p.key }
 
 func (p *filePath) absPath() string {
 	return fmt.Sprintf("%s/data/%s/%s", strings.TrimRight(p.absDir, "/"), p.bucket, p.key)
+}
+
+func urlJoinPath(base string, segments ...string) string {
+	if base == "" {
+		return ""
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	u = u.JoinPath(segments...)
+	return u.String()
 }
 
 // ParseURLOption 为 ParsePublicURL 提供可选解析参数。
