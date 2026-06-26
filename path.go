@@ -14,29 +14,27 @@ func ParseURI(uri string) (scheme, bucket, key string, err error) {
 	}
 	switch u.Scheme {
 	case SchemeS3:
+		if u.Host == "" {
+			return "", "", "", ErrInvalidPath
+		}
+		return u.Scheme, u.Host, strings.TrimPrefix(u.Path, "/"), nil
 	case SchemeFile:
+		return parseFileURI(u)
 	default:
 		return "", "", "", ErrInvalidPath
 	}
-	if u.Scheme == SchemeS3 && u.Host == "" {
-		return "", "", "", ErrInvalidPath
+}
+
+func parseFileURI(u *url.URL) (scheme, bucket, key string, err error) {
+	if u.Host != "" {
+		return SchemeFile, u.Host, strings.TrimPrefix(u.Path, "/"), nil
 	}
-	if u.Scheme == SchemeFile {
-		bucket = u.Host
-		if bucket == "" {
-			path := strings.TrimPrefix(u.Path, "/")
-			idx := strings.Index(path, "/")
-			if idx >= 0 {
-				bucket = path[:idx]
-				key = path[idx+1:]
-			} else {
-				bucket = path
-			}
-			return u.Scheme, bucket, key, nil
-		}
+	path := strings.TrimPrefix(u.Path, "/")
+	idx := strings.Index(path, "/")
+	if idx >= 0 {
+		return SchemeFile, path[:idx], path[idx+1:], nil
 	}
-	key = strings.TrimPrefix(u.Path, "/")
-	return u.Scheme, u.Host, key, nil
+	return SchemeFile, path, "", nil
 }
 
 // StoragePath 是存储路径的统一载体，仅出现在返回值中。
