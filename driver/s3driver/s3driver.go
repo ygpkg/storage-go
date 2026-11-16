@@ -453,6 +453,13 @@ func (d *Driver) PresignGetObject(ctx context.Context, bucket, key string, ttl t
 	if o.ByteRange != nil {
 		input.Range = aws.String(fmt.Sprintf("bytes=%d-%d", o.ByteRange.Start, o.ByteRange.End))
 	}
+	// 响应头覆盖（可选）：进入签名查询参数，由存储端在响应里回填；留空则 URL 与历史一致。
+	if o.ResponseContentType != "" {
+		input.ResponseContentType = aws.String(o.ResponseContentType)
+	}
+	if o.ResponseContentDisposition != "" {
+		input.ResponseContentDisposition = aws.String(o.ResponseContentDisposition)
+	}
 	req, err := d.presign.PresignGetObject(ctx, input, s3.WithPresignExpires(ttl))
 	if err != nil {
 		return "", wrapS3Err(err)
@@ -478,7 +485,15 @@ func (d *Driver) PresignPutObject(ctx context.Context, bucket, key string, ttl t
 		ContentMD5:  strPtr(o.ContentMD5),
 		Metadata:    o.Metadata,
 	}
-	req, err := d.presign.PresignPutObject(ctx, input, s3.WithPresignExpires(ttl))
+	presignOpts := []func(*s3.PresignOptions){s3.WithPresignExpires(ttl)}
+	if o.PresignBindContentType && o.ContentType != "" {
+		// 只有显式开启才换签名器：默认路径与历史行为逐字节一致（Content-Type 不进签名）。
+		presigner := newContentTypePresigner(o.ContentType)
+		presignOpts = append(presignOpts, func(po *s3.PresignOptions) {
+			po.Presigner = presigner
+		})
+	}
+	req, err := d.presign.PresignPutObject(ctx, input, presignOpts...)
 	if err != nil {
 		return "", wrapS3Err(err)
 	}

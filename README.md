@@ -154,6 +154,27 @@ s, _ := storage.New(storage.DriverCOS, storage.Config{
 })
 ```
 
+## 预签名 URL
+
+私有对象通过预签名 URL 做临时授权（GET 用于下载，PUT 用于上传）：
+
+```go
+url, err := s.PresignGetObject(ctx, bucket, key, 30*time.Minute)
+url, err = s.PresignPutObject(ctx, bucket, key, 15*time.Minute)
+```
+
+两个可选能力（默认关闭，不改变既有调用方的 URL）：
+
+| 能力 | 用法 | 说明 |
+| --- | --- | --- |
+| 预签名 PUT **绑定** Content-Type | `PresignPutObject(..., storage.WithContentType("image/png"), storage.WithPresignBindContentType())` | 签名头含 `content-type`，上传方必须原样携带，否则 403。默认不绑（签名只覆盖 host），由上传方决定类型 |
+| 预签名 GET 覆盖响应头 | `PresignGetObject(..., storage.WithResponseContentType("image/webp"))`、`storage.WithResponseContentDisposition(`attachment; filename="a.png"`)` | 作为 `response-content-type` / `response-content-disposition` 进签名，由存储端在响应里回填 |
+
+两条约束：
+
+- 本地磁盘驱动不支持预签名（返回 `ErrNotSupported`），两个新选项在 Local 下被忽略；
+- TTL 只有签名有效期，不限制重放次数——需要"用一次就作废"时请配合唯一 key + 服务端改写（如上传后 rename/复制）。
+
 ## 核心概念
 
 ### StoragePath
