@@ -576,6 +576,22 @@ Base / Multipart 子接口保持原子性（每个方法对应一次独立的存
 
 `PresignPutObject` 通过短期 TTL 实现"准一次性 URL"。将 URL 的签名有效期设为 30-60s，业务层确保单次调用即足够。严格的一次性约束须由服务端侧策略（如唯一 key + 上传后 rename）配合。
 
+### 11.1 预签名选项（向后兼容的新增）
+
+| 选项 | 作用域 | 默认 | 语义 |
+| --- | --- | --- | --- |
+| `PutOption.ContentType` | PutObject / PresignPutObject | 空 | 对象 Content-Type；预签名路径下**是否进签名**由下一个开关决定 |
+| `WithPresignBindContentType()` | 仅 PresignPutObject | 关闭 | 把 `ContentType` 绑进 SigV4 signed headers（`content-type;host`）。上传方必须原样携带类型，否则 403。关闭时与历史行为一致（只签 `host`） |
+| `GetOption.ResponseContentType` | 仅 PresignGetObject | 空 | 写入 `response-content-type` 查询参数，存储端在响应里回填 |
+| `GetOption.ResponseContentDisposition` | 仅 PresignGetObject | 空 | 写入 `response-content-disposition` 查询参数（可带下载文件名） |
+
+实现要点：
+
+- aws-sdk-go-v2 在 PutObject 的 presign 路径上会 `RemoveContentTypeHeader`，因此绑定类型必须换用专用 presigner（`driver/s3driver/presign.go` 的 `contentTypePresigner`），在 SDK 移除之后再写回；
+- 该 presigner 必须开 `DisableURIPathEscaping`（与 S3 客户端默认签名器一致），否则非 ASCII key 会被二次转义（`%E5` → `%25E5`）导致 `SignatureDoesNotMatch`；
+- 两个新选项都是可选字段/函数，默认关闭时生成的 URL 与 v0.0.7 逐字节一致（`driver/s3driver/presign_test.go` 有断言）；
+- Local driver 的预签名实现忽略这两个选项（其自签 URL 不含 `response-*`）。
+
 `PublicURL` 的行为由 `StoragePath` 实现决定。各 driver 通过自身构造的 `S3PathBuilder` / `LocalPathBuilder` 控制 URL 渲染。调用方从 `PutObjectResult`、`GetObjectResult` 等结果中的 `.Path.PublicURL()` 获取即可。
 
 ## 十二、Local Driver 实现思路
